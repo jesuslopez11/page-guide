@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Page Guide</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <aside id="sidebar">
+    <div class="brand">📄 Page Guide</div>
+
+    <div id="drop-zone" class="drop-zone">
+      <div class="drop-icon">↑</div>
+      <div class="drop-label">Drop a file here</div>
+      <div class="drop-hint">PDF · TXT · MD</div>
+    </div>
+    <input type="file" id="file-input" accept=".pdf,.txt,.md" hidden />
+
+    <div id="book-section" hidden>
+      <div id="book-title" class="book-title"></div>
+      <div id="book-stats" class="book-stats"></div>
+
+      <div class="jump-row">
+        <input type="number" id="jump-input" placeholder="Jump to page…" min="1" />
+        <button id="jump-btn">→</button>
+      </div>
+
+      <div id="nearby-pages" class="nearby-pages"></div>
+    </div>
+  </aside>
+
+  <main>
+    <header class="top-bar">
+      <div class="depth-btns">
+        <span class="depth-label">Walkthrough depth:</span>
+        <button class="depth-btn" data-mode="short">⚡ Short</button>
+        <button class="depth-btn active" data-mode="medium">🎥 Medium</button>
+        <button class="depth-btn" data-mode="long">🔍 Deep Dive</button>
+      </div>
+      <button id="re-explain" class="re-explain" hidden>↺ Re-explain</button>
+    </header>
+
+    <div id="page-nav" class="page-nav" hidden>
+      <button id="prev-btn" class="nav-btn">← Prev</button>
+      <span id="page-label">Page 1</span>
+      <button id="next-btn" class="nav-btn">Next →</button>
+    </div>
+
+    <div id="output" class="output">
+      <div class="welcome">
+        <p>Upload a PDF or text file to get started.</p>
+        <p>Every page is walked through clearly — each idea connected to what came before it.</p>
+      </div>
+    </div>
+
+    <div id="bottom-nav" class="bottom-nav" hidden>
+      <button id="prev-bottom" class="nav-btn-lg">← Previous page</button>
+      <button id="next-bottom" class="nav-btn-lg primary">Next page →</button>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/script.js"></script>
+</body>
+</html>
