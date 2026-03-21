@@ -9,6 +9,7 @@ const state = {
   cache:         {},   // `${index}-${mode}` => markdown string
   summaryCache:  {},   // pageIndex => summary after reading that page
   summary:       '',   // rolling "story so far" summary
+  nextTeaser:    '',   // first few words of the next page
   streaming:     false,
 };
 
@@ -251,8 +252,12 @@ async function updateSummary(pageIndex) {
     });
     if (res.ok) {
       const data = await res.json();
-      state.summary = data.summary;
+      state.summary    = data.summary;
+      state.nextTeaser = data.next_teaser || '';
       state.summaryCache[pageIndex] = data.summary;
+      // Refresh the context box live without re-rendering the whole page
+      const box = document.getElementById('context-box');
+      if (box) box.outerHTML = overviewHTML();
     }
   } catch { /* fail silently — summary is nice-to-have, not critical */ }
 }
@@ -266,6 +271,23 @@ function render(markdown) {
 }
 
 function overviewHTML() {
-  if (!state.overview) return '';
-  return `<div class="overview-box"><span class="overview-label">About this book</span>${state.overview}</div>`;
+  if (state.summary) {
+    // Once the user has read pages, show where they are + what's coming
+    const teaser = state.nextTeaser
+      ? `<span class="overview-next"><span class="overview-next-label">Coming up →</span>${state.nextTeaser}…</span>`
+      : '';
+    return `<div class="overview-box" id="context-box">
+      <span class="overview-label">Where you are</span>
+      <span class="overview-summary">${state.summary}</span>
+      ${teaser}
+    </div>`;
+  }
+  if (state.overview) {
+    // Before reading anything, show the book overview
+    return `<div class="overview-box" id="context-box">
+      <span class="overview-label">About this book</span>
+      ${state.overview}
+    </div>`;
+  }
+  return '';
 }

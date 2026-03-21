@@ -74,7 +74,7 @@ def generate_book_overview(pages: list[dict]) -> str:
                 f"Here are the first few pages of a book:\n\n{sample}\n\n"
                 "Write 3-4 casual sentences: what is this book about, who are the main "
                 "characters, and what central conflict or question is being set up? "
-                "Plain English, no bullet points, no headers, just talk."
+                "Plain English only. No markdown. No bullet points. No headers. No bold. Just plain sentences."
             ),
         }],
     )
@@ -260,7 +260,14 @@ async def summarize(req: SummarizeRequest):
         max_tokens=250,
         messages=[{"role": "user", "content": prompt}],
     )
-    return {"summary": msg.content[0].text.strip()}
+
+    # Peek at the next page so the UI can show a "coming up" teaser
+    next_teaser = ""
+    if req.page_index + 1 < len(pages):
+        next_text = pages[req.page_index + 1]["text"]
+        next_teaser = " ".join(next_text.split()[:30])
+
+    return {"summary": msg.content[0].text.strip(), "next_teaser": next_teaser}
 
 
 @app.get("/health")
