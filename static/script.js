@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const state = {
   contentId:     null,
   pages:         [],   // [{index, title, page_num}]
+  overview:      '',   // generated once on upload — what this book is about
   currentIndex:  0,
   mode:          'medium',
   cache:         {},   // `${index}-${mode}` => markdown string
@@ -62,6 +63,7 @@ async function upload(file) {
 function initBook(data) {
   state.contentId    = data.content_id;
   state.pages        = data.pages;
+  state.overview     = data.overview || '';
   state.currentIndex = 0;
   state.cache        = {};
   state.summaryCache = {};
@@ -171,7 +173,7 @@ async function loadPage(index, forceRefresh) {
   if (state.streaming) return;
   state.streaming = true;
 
-  output.innerHTML = `
+  output.innerHTML = overviewHTML() + `
     <div class="loading-wrap">
       <div class="loading-dots"><span></span><span></span><span></span></div>
     </div>`;
@@ -201,7 +203,7 @@ async function loadPage(index, forceRefresh) {
 
     const div = document.createElement('div');
     div.className = 'explanation';
-    output.innerHTML = '';
+    output.innerHTML = overviewHTML();
     output.appendChild(div);
     output.scrollTop = 0;
 
@@ -259,6 +261,11 @@ function render(markdown) {
   const div = document.createElement('div');
   div.className = 'explanation';
   div.innerHTML = marked.parse(markdown);
-  output.innerHTML = '';
+  output.innerHTML = overviewHTML();
   output.appendChild(div);
+}
+
+function overviewHTML() {
+  if (!state.overview) return '';
+  return `<div class="overview-box"><span class="overview-label">About this book</span>${state.overview}</div>`;
 }

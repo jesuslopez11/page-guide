@@ -59,35 +59,63 @@ def extract_text_pages(content: str, words_per_page: int = 300) -> list[dict]:
     return pages
 
 
+def generate_book_overview(pages: list[dict]) -> str:
+    """Quick one-time call on upload to understand what the book is about."""
+    sample = "\n\n---\n\n".join(
+        f'{p["title"]}:\n{p["text"][:1500]}'
+        for p in pages[:8]
+    )
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=250,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Here are the first few pages of a book:\n\n{sample}\n\n"
+                "Write 3-4 casual sentences: what is this book about, who are the main "
+                "characters, and what central conflict or question is being set up? "
+                "Plain English, no bullet points, no headers, just talk."
+            ),
+        }],
+    )
+    return msg.content[0].text.strip()
+
+
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
 PROMPTS = {
     "short": """\
-You are a friend who already read this book, helping someone who doesn't read much follow it page by page.
+You're a friend who already read this book, walking someone who doesn't read much through it page by page.
 
-Write 3–5 sentences as one natural flowing paragraph — no headers, no bullet points, no bold labels, no numbered sections. Just talk to them.
+You're given context about the book, a running story summary (if available), the previous page (if available), and the current page.
 
-If "Story so far" is provided, open with a casual sentence weaving in where they are in the story. If "Previous page" is provided, naturally connect this page to what just happened. Walk through what this page is doing in plain language. When a character or concept appears, remind them who or what it is in parentheses. Let your last sentence land on the one thing that matters most from this page — don't label it, just say it.
+Write 3-4 short casual paragraphs. No headers. No bullet points. No bold labels. No section names. No "Bridge:" or "Bottom line:" prefixes. Just talk to them like you're sending a voice note.
 
-Sound like a friend sending a voice note, not a teacher filling out a form. Casual, warm, direct.""",
+Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then explain what's happening on this page in plain English, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"). Let your last sentence just land on the one thing that matters most — don't announce it, just say it.
+
+Under 150 words. Casual and warm.""",
 
     "medium": """\
-You are a friend who already read this book, helping someone who doesn't read much follow it page by page. They struggle to connect ideas — make every link explicit, but do it naturally.
+You're a friend who already read this book, walking someone who doesn't read much through it page by page. They struggle to connect ideas — make every link feel natural and obvious.
 
-Write in flowing paragraphs — no headers, no bullet points, no bold section labels, no numbered lists. Just talk to them like a friend would.
+You're given context about the book, a running story summary (if available), the previous page (if available), and the current page.
 
-If "Story so far" is provided, open with one casual sentence weaving in where they are in the bigger picture. If "Previous page" is provided, naturally bridge from it as you open. Then walk through what's happening on this page — idea by idea, in order, each one connecting to the last. When any character or concept appears, remind them who or what it is in parentheses. Let the whole thing build naturally and close with one easy sentence about what to watch for on the next page — don't label it, just say it.
+Write flowing paragraphs. No headers. No bullet points. No bold section labels. No "Bridge:" or "Watch for:" prefixes. No numbered sections. Just talk.
 
-The whole response should read like one flowing conversation, not a form being filled out.""",
+Use the book overview and summary to open with a sentence or two grounding them in the bigger story. Then walk through this page idea by idea, in order, naturally bridging from the previous page as you go. Slip character and concept reminders in as they come up. Let everything connect without announcing the connections. End on one plain sentence about what's quietly being set up for what comes next — no label, just say it.
+
+Sound like a friend, not a teacher filling out a form.""",
 
     "long": """\
-You are a patient friend who already read this book carefully, helping someone who struggles with reading follow along page by page. They find it hard to connect ideas — leave no gap unexplained, but make it feel natural.
+You're a patient friend who already read this book carefully, walking someone through it page by page. They struggle to connect ideas between sentences, between pages, and across the whole book — leave nothing implicit, but make it feel natural.
 
-Write in flowing paragraphs — no headers, no bullet points, no bold section labels, no numbered lists. Just talk.
+You're given context about the book, a running story summary (if available), the previous page (if available), and the current page.
 
-If "Story so far" is provided, open with 1–2 casual sentences grounding them in the bigger picture — what's been building and where this page fits. If "Previous page" is provided, flow naturally from it into this page. Then walk through every idea on this page in order: say what's happening in plain English, explain why the author put it here, remind them who characters and concepts are in parentheses, and connect each idea to what came just before it on the page. Somewhere in there, tie this page to the overall story being built. Close on one plain sentence — the bottom line of what this page was about — without flagging it as a conclusion, just let it land naturally.
+Write in flowing paragraphs. No headers. No bullet points. No bold labels. No "Bridge from last page:" or "Big picture:" or any section prefixes. Just talk to them like you're sitting right next to them.
 
-The whole thing should feel like one long, warm conversation. Not a report. Not a checklist. Just a friend walking them through it.""",
+Open by grounding them in the bigger story using the book overview and summary — what's been building, and where does this page fit? Let the flow from the previous page come through naturally. Walk through every idea on this page in order: say what's happening plainly, explain why the author put it here, remind them who characters and concepts are as they come up, connect each idea to the one before it. Tie this page to the overall arc somewhere in there. End on one plain honest sentence — the bottom line of this page — without announcing it as a conclusion, just let it land.
+
+Warm, thorough, and conversational throughout.""",
 }
 
 
@@ -118,12 +146,18 @@ async def upload_file(file: UploadFile = File(...)):
     if not pages:
         raise HTTPException(400, "No readable content found.")
 
+    try:
+        overview = await asyncio.to_thread(generate_book_overview, pages)
+    except Exception:
+        overview = ""
+
     content_id = str(uuid.uuid4())
-    content_store[content_id] = {"title": file.filename, "pages": pages}
+    content_store[content_id] = {"title": file.filename, "pages": pages, "overview": overview}
 
     return {
         "content_id": content_id,
         "title": file.filename,
+        "overview": overview,
         "total_pages": len(pages),
         "last_page_num": pages[-1]["page_num"],
         "pages": [
@@ -153,6 +187,7 @@ async def explain(req: ExplainRequest):
 
     store = content_store[req.content_id]
     pages = store["pages"]
+    overview = store.get("overview", "")
 
     if req.page_index < 0 or req.page_index >= len(pages):
         raise HTTPException(400, "Invalid page index.")
@@ -164,25 +199,21 @@ async def explain(req: ExplainRequest):
 
     mode = req.mode if req.mode in PROMPTS else "medium"
 
-    # Rolling story summary grounds the reader in the bigger picture
-    summary_block = ""
+    # Build context: book overview → rolling summary → previous page → current page
+    parts = []
+    if overview:
+        parts.append(f'About this book:\n"""\n{overview}\n"""')
     if req.summary.strip():
-        summary_block = f'Story so far:\n"""\n{req.summary.strip()}\n"""\n\n'
-
-    # Previous page text lets Claude bridge directly from last page
-    prev_block = ""
+        parts.append(f'Story so far:\n"""\n{req.summary.strip()}\n"""')
     if req.page_index > 0:
         prev = pages[req.page_index - 1]
-        prev_block = f'Previous page ({prev["title"]}):\n"""\n{prev["text"][:2500]}\n"""\n\n'
+        parts.append(f'Previous page ({prev["title"]}):\n"""\n{prev["text"][:2500]}\n"""')
+    parts.append(f'Current page ({page["title"]}):\n"""\n{page["text"]}\n"""')
+    parts.append("Walk me through this page.")
 
-    user_msg = (
-        f"{summary_block}"
-        f"{prev_block}"
-        f'Current page ({page["title"]}):\n"""\n{page["text"]}\n"""\n\n'
-        "Please walk me through this page using your approach."
-    )
+    user_msg = "\n\n".join(parts)
 
-    model = "claude-sonnet-4-6" if mode == "long" else "claude-haiku-4-5"
+    model = "claude-sonnet-4-6" if mode == "long" else "claude-haiku-4-5-20251001"
 
     def generate():
         try:
@@ -225,7 +256,7 @@ async def summarize(req: SummarizeRequest):
     )
 
     msg = client.messages.create(
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         max_tokens=250,
         messages=[{"role": "user", "content": prompt}],
     )

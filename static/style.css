@@ -270,6 +270,28 @@ main {
   40%           { opacity: 1;   }
 }
 
+/* Overview box */
+.overview-box {
+  max-width: 720px;
+  margin: 0 auto 20px;
+  background: rgba(79,126,248,0.07);
+  border: 1px solid rgba(79,126,248,0.2);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #a0aec0;
+  line-height: 1.7;
+}
+.overview-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 5px;
+}
+
 /* Error */
 .error-box {
   background: rgba(252,129,129,0.1);
