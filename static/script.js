@@ -1,12 +1,14 @@
 const $ = id => document.getElementById(id);
 
 const state = {
-  contentId:    null,
-  pages:        [],   // [{index, title, page_num}]
-  currentIndex: 0,
-  mode:         'medium',
-  cache:        {},   // `${index}-${mode}` => markdown string
-  streaming:    false,
+  contentId:     null,
+  pages:         [],   // [{index, title, page_num}]
+  currentIndex:  0,
+  mode:          'medium',
+  cache:         {},   // `${index}-${mode}` => markdown string
+  summaryCache:  {},   // pageIndex => summary after reading that page
+  summary:       '',   // rolling "story so far" summary
+  streaming:     false,
 };
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -62,6 +64,8 @@ function initBook(data) {
   state.pages        = data.pages;
   state.currentIndex = 0;
   state.cache        = {};
+  state.summaryCache = {};
+  state.summary      = '';
 
   bookTitle.textContent = data.title;
   bookStats.textContent = `${data.total_pages} readable pages`;
@@ -114,6 +118,12 @@ function goToPage(index) {
   if (!state.pages.length) return;
   index = Math.max(0, Math.min(index, state.pages.length - 1));
   state.currentIndex = index;
+
+  // Restore the best available summary for context when jumping around
+  for (let i = index - 1; i >= 0; i--) {
+    if (state.summaryCache[i]) { state.summary = state.summaryCache[i]; break; }
+  }
+
   updateNav();
   updateNearbyPages();
   loadPage(index, false);
@@ -174,6 +184,7 @@ async function loadPage(index, forceRefresh) {
         content_id: state.contentId,
         page_index: index,
         mode:       state.mode,
+        summary:    state.summary,
       }),
     });
 
@@ -215,11 +226,33 @@ async function loadPage(index, forceRefresh) {
     }
 
     state.cache[key] = accumulated;
+
+    // Update the rolling summary in the background after the page is read
+    updateSummary(index);
   } catch (err) {
     output.innerHTML = `<div class="error-box">${err.message}</div>`;
   }
 
   state.streaming = false;
+}
+
+async function updateSummary(pageIndex) {
+  try {
+    const res = await fetch('/summarize', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        content_id:      state.contentId,
+        page_index:      pageIndex,
+        current_summary: state.summary,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      state.summary = data.summary;
+      state.summaryCache[pageIndex] = data.summary;
+    }
+  } catch { /* fail silently — summary is nice-to-have, not critical */ }
 }
 
 function render(markdown) {

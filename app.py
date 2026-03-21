@@ -63,42 +63,48 @@ def extract_text_pages(content: str, words_per_page: int = 300) -> list[dict]:
 
 PROMPTS = {
     "short": """\
-You are a warm reading companion for someone who finds it hard to connect ideas between pages.
+You are a friend who already read this book, helping someone who doesn't read much follow along page by page.
 
-Given the current page (and optionally the previous page for context):
+You may be given a "Story so far" summary, a "Previous page", and the "Current page".
 
-1. **↩ From last page** — one sentence: what the previous page left us with, and how this page picks it up. OMIT this section entirely if no previous page is provided.
-2. **📄 This page says** — 2–3 plain sentences covering what is happening or being argued right now.
-3. **💡 Remember this** — one sentence: the single most important thing on this page.
+Reply like this:
+1. **Where you are** — one casual sentence placing this page in the bigger story. ONLY include if "Story so far" was provided.
+2. **What just happened** — 2–3 plain sentences. When a character or concept appears, add a quick reminder in parentheses — e.g. "Paul (the teenage main character)".
+3. **Bottom line** — one sentence. If you were texting a friend what this page was about, what would you say?
 
-Under 150 words total. Plain language only. No jargon.""",
+Under 130 words. Casual and warm. No jargon. No formal language.""",
 
     "medium": """\
-You are a warm, patient reading companion for someone who struggles to connect ideas between pages. Make every link explicit.
+You are a friend who already read this book, helping someone who doesn't read much follow along page by page. They struggle to connect ideas — make every link explicit and keep it casual.
 
-Given the current page (and optionally the previous page for context):
+You may be given a "Story so far" summary, a "Previous page", and the "Current page".
 
-1. **↩ Coming from last page** — one clear sentence: what was just established, and how this page continues from it. OMIT this section entirely if no previous page is provided.
-2. **📄 What this page does** — walk through the main ideas in order. 3–5 short paragraphs. Plain language, no jargon.
-3. **🔗 Why it matters** — one short paragraph: how does this page push the story or argument forward?
-4. **👁 Watch for** — one sentence: what thread or question does this page leave open for the next page?
+Talk to them like this:
+1. **Where you are** — one casual sentence: where this page fits in the bigger story. ONLY include if "Story so far" was provided.
+2. **From last page** — one sentence connecting the previous page to this one. ONLY include if "Previous page" was provided.
+3. **What's happening** — walk through the main ideas in order, 3–5 short paragraphs. When any character or concept appears, remind them who/what it is in parentheses — e.g. "the Bene Gesserit (the secretive all-women order Jessica belongs to)".
+4. **Why it matters** — one short paragraph: what is this page building toward?
+5. **Watch for** — one casual sentence: what to look out for on the next page.
 
-Write like a friend explaining it over coffee.""",
+Write like you're sitting next to them. No jargon. No stiff language.""",
 
     "long": """\
-You are a patient, thorough reading companion for someone who struggles to connect ideas — between sentences, between pages, and across the whole book. Leave no gap unexplained.
+You are a patient friend who already read this book carefully, helping someone who struggles with reading follow along page by page. They find it hard to connect ideas — leave no gap unexplained.
 
-Given the current page (and optionally the previous page for context):
+You may be given a "Story so far" summary, a "Previous page", and the "Current page".
 
-1. **↩ Bridge from last page** — what the previous page established, and EXACTLY how this page follows from it. Be specific and concrete. OMIT this section entirely if no previous page is provided.
-2. **📄 Walk through this page** — go through every idea on this page in order:
-   - State the idea in plain language
-   - Explain WHY the author put it here — what purpose does it serve?
-   - Show how it connects to the idea just before it on this page
-3. **🌍 The big picture** — how does this page fit into the larger section or argument being built?
-4. **👁 What to watch for** — what question or thread does this page open up for the next page?
+Walk them through it like this:
+1. **Where you are** — 1–2 casual sentences grounding them in the bigger story. What's been building, and where does this page fit in? ONLY include if "Story so far" was provided.
+2. **From last page to this one** — exactly how the previous page flows into this one. ONLY include if "Previous page" was provided.
+3. **Let's go through this** — walk through every idea on this page in order:
+   - Say what's happening in plain English
+   - Explain WHY — what is the author doing here? What's the purpose of this moment?
+   - When any character or concept appears, remind them who/what it is — e.g. "Jessica (Paul's mom, trained by the Bene Gesserit)"
+   - Connect each new idea to what came just before it on this page
+4. **The big picture** — how does this page connect to the overall story being built?
+5. **Bottom line** — one casual sentence. If you had to text a friend what this page was about, what would you say?
 
-Plain language throughout. Treat the reader as intelligent but needing every connection made explicit.""",
+Warm, thorough, casual throughout. Like sitting right next to them.""",
 }
 
 
@@ -148,6 +154,13 @@ class ExplainRequest(BaseModel):
     content_id: str
     page_index: int
     mode: str
+    summary: str = ""  # rolling "story so far" built up as the user reads
+
+
+class SummarizeRequest(BaseModel):
+    content_id: str
+    page_index: int
+    current_summary: str = ""
 
 
 @app.post("/explain")
@@ -168,21 +181,24 @@ async def explain(req: ExplainRequest):
 
     mode = req.mode if req.mode in PROMPTS else "medium"
 
-    # Include previous page text so Claude can bridge the gap
+    # Rolling story summary grounds the reader in the bigger picture
+    summary_block = ""
+    if req.summary.strip():
+        summary_block = f'Story so far:\n"""\n{req.summary.strip()}\n"""\n\n'
+
+    # Previous page text lets Claude bridge directly from last page
     prev_block = ""
     if req.page_index > 0:
         prev = pages[req.page_index - 1]
-        prev_block = (
-            f'Previous page ({prev["title"]}):\n"""\n{prev["text"][:2500]}\n"""\n\n'
-        )
+        prev_block = f'Previous page ({prev["title"]}):\n"""\n{prev["text"][:2500]}\n"""\n\n'
 
     user_msg = (
+        f"{summary_block}"
         f"{prev_block}"
         f'Current page ({page["title"]}):\n"""\n{page["text"]}\n"""\n\n'
         "Please walk me through this page using your approach."
     )
 
-    # Deep dive uses Sonnet for better quality on complex pages
     model = "claude-sonnet-4-6" if mode == "long" else "claude-haiku-4-5"
 
     def generate():
@@ -201,6 +217,36 @@ async def explain(req: ExplainRequest):
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.post("/summarize")
+async def summarize(req: SummarizeRequest):
+    """Update the rolling story summary after a page is read."""
+    if req.content_id not in content_store:
+        raise HTTPException(404, "Content not found.")
+
+    pages = content_store[req.content_id]["pages"]
+
+    if req.page_index < 0 or req.page_index >= len(pages):
+        raise HTTPException(400, "Invalid page index.")
+
+    page = pages[req.page_index]
+    current = req.current_summary.strip()
+
+    prompt = (
+        f"{'Current summary:\n' + current + chr(10) + chr(10) if current else ''}"
+        f"New page ({page['title']}):\n{page['text'][:2000]}\n\n"
+        f"Write a 2–4 sentence plain-English summary covering everything up to and including this page. "
+        f"Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
+        f"Return only the summary text, nothing else."
+    )
+
+    msg = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=250,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return {"summary": msg.content[0].text.strip()}
 
 
 @app.get("/health")
