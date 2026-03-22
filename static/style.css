@@ -351,3 +351,90 @@ main {
 .nav-btn-lg.primary       { background: var(--accent); border-color: var(--accent); color: #fff; }
 .nav-btn-lg.primary:hover { background: var(--accent-hover); }
 .nav-btn-lg:disabled      { opacity: 0.35; cursor: default; }
+
+/* ── Menu button (hidden on desktop) ─────────────────────────────────────── */
+.menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 17px;
+  cursor: pointer;
+}
+
+/* Overlay behind open sidebar on mobile */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 99;
+}
+.sidebar-overlay.visible { display: block; }
+
+/* ── Mobile ───────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+
+  body { overflow: auto; }
+
+  /* Sidebar slides in from the left as a drawer */
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: -280px;
+    width: 280px;
+    height: 100%;
+    z-index: 100;
+    transition: left 0.25s ease;
+    overflow-y: auto;
+  }
+  #sidebar.open { left: 0; }
+
+  main {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .menu-btn { display: flex; }
+
+  .top-bar { padding: 10px 12px; gap: 8px; }
+
+  /* Depth buttons scroll horizontally, no wrapping */
+  .depth-btns {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    flex: 1;
+  }
+  .depth-btns::-webkit-scrollbar { display: none; }
+  .depth-label { display: none; }
+  .depth-btn   { font-size: 12px; padding: 5px 10px; white-space: nowrap; }
+
+  /* Re-explain: just the icon, no text */
+  .re-explain { padding: 5px 10px; font-size: 14px; }
+
+  .page-nav  { padding: 8px 12px; }
+  #page-label { font-size: 12px; }
+  .nav-btn   { padding: 6px 12px; font-size: 13px; }
+
+  /* Output — readable on a small screen */
+  #output { padding: 16px 14px; flex: 1; overflow-y: auto; }
+  .explanation { font-size: 16px; line-height: 1.95; max-width: 100%; }
+  .overview-box { font-size: 13px; }
+  .welcome { margin-top: 40px; font-size: 14px; }
+
+  /* Bigger tap targets on bottom nav */
+  .bottom-nav   { padding: 10px 12px; gap: 8px; }
+  .nav-btn-lg   { padding: 14px 8px; font-size: 15px; }
+
+  /* Drop zone more compact */
+  .drop-zone { padding: 16px 10px; }
+}

@@ -14,24 +14,41 @@ const state = {
 };
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
-const dropZone    = $('drop-zone');
-const fileInput   = $('file-input');
-const bookSection = $('book-section');
-const bookTitle   = $('book-title');
-const bookStats   = $('book-stats');
-const jumpInput   = $('jump-input');
-const jumpBtn     = $('jump-btn');
-const nearbyPages = $('nearby-pages');
-const depthBtns   = document.querySelectorAll('.depth-btn');
-const reExplain   = $('re-explain');
-const pageNav     = $('page-nav');
-const pageLabel   = $('page-label');
-const prevBtn     = $('prev-btn');
-const nextBtn     = $('next-btn');
-const output      = $('output');
-const bottomNav   = $('bottom-nav');
-const prevBottom  = $('prev-bottom');
-const nextBottom  = $('next-bottom');
+const dropZone       = $('drop-zone');
+const fileInput      = $('file-input');
+const bookSection    = $('book-section');
+const bookTitle      = $('book-title');
+const bookStats      = $('book-stats');
+const jumpInput      = $('jump-input');
+const jumpBtn        = $('jump-btn');
+const nearbyPages    = $('nearby-pages');
+const depthBtns      = document.querySelectorAll('.depth-btn');
+const reExplain      = $('re-explain');
+const pageNav        = $('page-nav');
+const pageLabel      = $('page-label');
+const prevBtn        = $('prev-btn');
+const nextBtn        = $('next-btn');
+const output         = $('output');
+const bottomNav      = $('bottom-nav');
+const prevBottom     = $('prev-bottom');
+const nextBottom     = $('next-bottom');
+const menuBtn        = $('menu-btn');
+const sidebar        = $('sidebar');
+const sidebarOverlay = $('sidebar-overlay');
+
+// ── Mobile sidebar ────────────────────────────────────────────────────────────
+function openSidebar()  {
+  sidebar.classList.add('open');
+  sidebarOverlay.classList.add('visible');
+}
+function closeSidebar() {
+  sidebar.classList.remove('open');
+  sidebarOverlay.classList.remove('visible');
+}
+menuBtn.addEventListener('click', () =>
+  sidebar.classList.contains('open') ? closeSidebar() : openSidebar()
+);
+sidebarOverlay.addEventListener('click', closeSidebar);
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 dropZone.addEventListener('click', () => fileInput.click());
@@ -156,7 +173,7 @@ function updateNearbyPages() {
     const el = document.createElement('div');
     el.className = 'page-item' + (j === i ? ' active' : '');
     el.textContent = p.title;
-    el.addEventListener('click', () => goToPage(j));
+    el.addEventListener('click', () => { goToPage(j); closeSidebar(); });
     nearbyPages.appendChild(el);
   }
 }
