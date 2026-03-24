@@ -5,7 +5,7 @@ const state = {
   pages:         [],   // [{index, title, page_num}]
   overview:      '',   // generated once on upload — what this book is about
   currentIndex:  0,
-  mode:          'medium',
+  mode:          'short',
   cache:         {},   // `${index}-${mode}` => markdown string
   summaryCache:  {},   // pageIndex => summary after reading that page
   summary:       '',   // rolling "story so far" summary
