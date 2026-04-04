@@ -333,4 +333,12 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/debug-key")
+async def debug_key():
+    key = os.getenv("ELEVENLABS_API_KEY", "")
+    if not key:
+        return {"key_set": False, "preview": ""}
+    return {"key_set": True, "preview": key[:8] + "..." + key[-4:]}
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
