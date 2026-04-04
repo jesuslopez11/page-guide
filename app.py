@@ -309,7 +309,7 @@ async def text_to_speech(req: TTSRequest):
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{req.voice_id}"
         r = req_lib.post(
             url,
-            headers={"xi-api-key": api_key, "Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
             json={
                 "text": text,
                 "model_id": "eleven_turbo_v2_5",
