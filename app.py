@@ -317,6 +317,8 @@ async def text_to_speech(req: TTSRequest):
             },
             timeout=30,
         )
+        if not r.ok:
+            raise Exception(f"ElevenLabs {r.status_code}: {r.text}")
         r.raise_for_status()
         return r.content
 
