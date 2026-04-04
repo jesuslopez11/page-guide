@@ -13,6 +13,101 @@ const state = {
   streaming:     false,
 };
 
+// ── Audio / TTS ────────────────────────────────────────────────────────────────
+let currentAudio = null;
+
+function stopAudio() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.src = '';
+    currentAudio = null;
+  }
+  document.querySelectorAll('.tts-btn').forEach(btn => {
+    btn.disabled = false;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+  });
+}
+
+async function speak(btn, fetchBody) {
+  // Toggle pause/resume if this button is already playing
+  if (currentAudio && btn.dataset.playing === '1') {
+    if (currentAudio.paused) {
+      currentAudio.play();
+      btn.textContent = '⏸ Pause';
+    } else {
+      currentAudio.pause();
+      btn.textContent = '▶ Resume';
+    }
+    return;
+  }
+
+  stopAudio();
+  btn.textContent = '⏳ Loading…';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/tts', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(fetchBody),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'TTS failed');
+    }
+
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    currentAudio = new Audio(url);
+
+    currentAudio.onended = () => {
+      URL.revokeObjectURL(url);
+      currentAudio = null;
+      btn.disabled = false;
+      btn.dataset.playing = '';
+      btn.textContent = btn.dataset.label;
+    };
+
+    currentAudio.play();
+    btn.dataset.playing = '1';
+    btn.disabled = false;
+    btn.textContent = '⏸ Pause';
+
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = btn.dataset.label;
+    alert(`Read aloud error: ${err.message}`);
+  }
+}
+
+function addTTSBar(explanationText) {
+  document.getElementById('tts-bar')?.remove();
+  const bar = document.createElement('div');
+  bar.id = 'tts-bar';
+  bar.className = 'tts-bar';
+
+  const btnExp = document.createElement('button');
+  btnExp.className = 'tts-btn';
+  btnExp.dataset.label = '🔊 Read explanation';
+  btnExp.textContent   = '🔊 Read explanation';
+  btnExp.onclick = () => speak(btnExp, { text: explanationText });
+
+  const btnPage = document.createElement('button');
+  btnPage.className = 'tts-btn';
+  btnPage.dataset.label = '📖 Read page text';
+  btnPage.textContent   = '📖 Read page text';
+  btnPage.onclick = () => speak(btnPage, {
+    content_id: state.contentId,
+    page_index: state.currentIndex,
+  });
+
+  bar.appendChild(btnExp);
+  bar.appendChild(btnPage);
+  output.appendChild(bar);
+}
+
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const dropZone       = $('drop-zone');
 const fileInput      = $('file-input');
@@ -139,6 +234,8 @@ function goToPage(index) {
   index = Math.max(0, Math.min(index, state.pages.length - 1));
   state.currentIndex = index;
 
+  stopAudio(); // stop any playing audio when navigating
+
   // Restore the best available summary for context when jumping around
   for (let i = index - 1; i >= 0; i--) {
     if (state.summaryCache[i]) { state.summary = state.summaryCache[i]; break; }
@@ -247,6 +344,9 @@ async function loadPage(index, forceRefresh) {
 
     state.cache[key] = accumulated;
 
+    // Add TTS buttons below the explanation
+    addTTSBar(div.innerText);
+
     // Update the rolling summary in the background after the page is read
     updateSummary(index);
   } catch (err) {
@@ -285,6 +385,7 @@ function render(markdown) {
   div.innerHTML = marked.parse(markdown);
   output.innerHTML = overviewHTML();
   output.appendChild(div);
+  addTTSBar(div.innerText);
 }
 
 function overviewHTML() {

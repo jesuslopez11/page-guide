@@ -3,3 +3,4 @@ uvicorn[standard]
 anthropic
 pymupdf
 python-multipart
+requests

@@ -276,6 +276,58 @@ async def summarize(req: SummarizeRequest):
     return {"summary": msg.content[0].text.strip(), "next_teaser": next_teaser}
 
 
+class TTSRequest(BaseModel):
+    text: str = ""           # explanation text (sent from frontend)
+    content_id: str = ""     # for reading raw page text
+    page_index: int = -1     # for reading raw page text
+    voice_id: str = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs Rachel (default)
+
+
+@app.post("/tts")
+async def text_to_speech(req: TTSRequest):
+    import requests as req_lib
+    from fastapi.responses import Response
+
+    api_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if not api_key:
+        raise HTTPException(500, "ELEVENLABS_API_KEY is not set. Add it to your environment variables.")
+
+    # Get the text to speak
+    if req.text.strip():
+        text = req.text.strip()[:4500]
+    elif req.content_id and req.page_index >= 0:
+        store = content_store.get(req.content_id)
+        if not store:
+            raise HTTPException(404, "Content not found.")
+        if req.page_index >= len(store["pages"]):
+            raise HTTPException(400, "Invalid page index.")
+        text = store["pages"][req.page_index]["text"][:4500]
+    else:
+        raise HTTPException(400, "Provide either text or content_id + page_index.")
+
+    def call_elevenlabs():
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{req.voice_id}"
+        r = req_lib.post(
+            url,
+            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": "eleven_turbo_v2_5",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.content
+
+    try:
+        audio_bytes = await asyncio.to_thread(call_elevenlabs)
+    except Exception as e:
+        raise HTTPException(502, f"ElevenLabs error: {e}")
+
+    return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
