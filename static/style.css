@@ -309,6 +309,31 @@ main {
   min-width: 30px;
 }
 
+/* Reading panel with word highlighting */
+.reading-panel {
+  max-width: 720px;
+  margin: 12px auto;
+  padding: 16px 20px;
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+  line-height: 1.9;
+  font-size: 1rem;
+  color: var(--text, #cdd6f4);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.reading-panel .word {
+  display: inline;
+  border-radius: 3px;
+  padding: 1px 2px;
+  transition: background 0.1s;
+}
+.reading-panel .word.active {
+  background: var(--accent, #89b4fa);
+  color: #1e1e2e;
+}
+
 /* Overview box */
 .overview-box {
   max-width: 720px;

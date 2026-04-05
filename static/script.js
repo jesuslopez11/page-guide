@@ -14,74 +14,89 @@ const state = {
 };
 
 // ── Audio / TTS ────────────────────────────────────────────────────────────────
-let currentAudio = null;
 let playbackSpeed = 1.0;
+let activeBtn = null;
 
 function stopAudio() {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.src = '';
-    currentAudio = null;
-  }
+  speechSynthesis.cancel();
+  activeBtn = null;
   document.querySelectorAll('.tts-btn').forEach(btn => {
     btn.disabled = false;
     btn.dataset.playing = '';
     btn.textContent = btn.dataset.label;
   });
+  const panel = document.getElementById('reading-panel');
+  if (panel) panel.remove();
 }
 
-async function speak(btn, fetchBody) {
-  // Toggle pause/resume if this button is already playing
-  if (currentAudio && btn.dataset.playing === '1') {
-    if (currentAudio.paused) {
-      currentAudio.play();
+function showReadingPanel(text) {
+  document.getElementById('reading-panel')?.remove();
+  const panel = document.createElement('div');
+  panel.id = 'reading-panel';
+  panel.className = 'reading-panel';
+  const words = text.trim().split(/\s+/);
+  panel.innerHTML = words.map((w, i) =>
+    `<span class="word" data-i="${i}">${w}</span>`
+  ).join(' ');
+  const bar = document.getElementById('tts-bar');
+  bar.parentNode.insertBefore(panel, bar);
+  return panel;
+}
+
+function highlightWord(panel, charIndex) {
+  const spans = panel.querySelectorAll('.word');
+  let count = 0;
+  for (let i = 0; i < spans.length; i++) {
+    spans[i].classList.remove('active');
+    if (count <= charIndex && charIndex < count + spans[i].textContent.length + 1) {
+      spans[i].classList.add('active');
+      spans[i].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    count += spans[i].textContent.length + 1;
+  }
+}
+
+function speakText(btn, text) {
+  if (btn.dataset.playing === '1') {
+    if (speechSynthesis.paused) {
+      speechSynthesis.resume();
       btn.textContent = '⏸ Pause';
     } else {
-      currentAudio.pause();
+      speechSynthesis.pause();
       btn.textContent = '▶ Resume';
     }
     return;
   }
 
   stopAudio();
-  btn.textContent = '⏳ Loading…';
-  btn.disabled = true;
+  const panel = showReadingPanel(text);
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = playbackSpeed;
 
-  try {
-    const res = await fetch('/tts', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(fetchBody),
-    });
+  utterance.onboundary = e => {
+    if (e.name === 'word') highlightWord(panel, e.charIndex);
+  };
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'TTS failed');
-    }
-
-    const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
-    currentAudio = new Audio(url);
-    currentAudio.playbackRate = playbackSpeed;
-
-    currentAudio.onended = () => {
-      URL.revokeObjectURL(url);
-      currentAudio = null;
-      btn.disabled = false;
-      btn.dataset.playing = '';
-      btn.textContent = btn.dataset.label;
-    };
-
-    currentAudio.play();
-    btn.dataset.playing = '1';
+  utterance.onend = () => {
+    panel.remove();
     btn.disabled = false;
-    btn.textContent = '⏸ Pause';
-
-  } catch (err) {
-    btn.disabled = false;
+    btn.dataset.playing = '';
     btn.textContent = btn.dataset.label;
-    alert(`Read aloud error: ${err.message}`);
-  }
+    activeBtn = null;
+  };
+
+  utterance.onerror = () => {
+    panel.remove();
+    btn.disabled = false;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+    activeBtn = null;
+  };
+
+  activeBtn = btn;
+  btn.dataset.playing = '1';
+  btn.textContent = '⏸ Pause';
+  speechSynthesis.speak(utterance);
 }
 
 function addTTSBar(explanationText) {
@@ -94,16 +109,27 @@ function addTTSBar(explanationText) {
   btnExp.className = 'tts-btn';
   btnExp.dataset.label = '🔊 Read explanation';
   btnExp.textContent   = '🔊 Read explanation';
-  btnExp.onclick = () => speak(btnExp, { text: explanationText });
+  btnExp.onclick = () => speakText(btnExp, explanationText);
 
   const btnPage = document.createElement('button');
   btnPage.className = 'tts-btn';
   btnPage.dataset.label = '📖 Read page text';
   btnPage.textContent   = '📖 Read page text';
-  btnPage.onclick = () => speak(btnPage, {
-    content_id: state.contentId,
-    page_index: state.currentIndex,
-  });
+  btnPage.onclick = async () => {
+    if (btnPage.dataset.playing === '1') { speakText(btnPage, ''); return; }
+    btnPage.textContent = '⏳ Loading…';
+    btnPage.disabled = true;
+    try {
+      const res = await fetch(`/page-text?content_id=${state.contentId}&page_index=${state.currentIndex}`);
+      const data = await res.json();
+      btnPage.disabled = false;
+      btnPage.textContent = btnPage.dataset.label;
+      speakText(btnPage, data.text);
+    } catch {
+      btnPage.disabled = false;
+      btnPage.textContent = btnPage.dataset.label;
+    }
+  };
 
   const speedControl = document.createElement('div');
   speedControl.className = 'speed-control';
@@ -122,7 +148,6 @@ function addTTSBar(explanationText) {
   slider.oninput = () => {
     playbackSpeed = parseFloat(slider.value);
     speedLabel.textContent = `${playbackSpeed.toFixed(1)}x`;
-    if (currentAudio) currentAudio.playbackRate = playbackSpeed;
   };
 
   speedControl.appendChild(slider);

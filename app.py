@@ -330,6 +330,17 @@ async def text_to_speech(req: TTSRequest):
     return Response(content=audio_bytes, media_type="audio/mpeg")
 
 
+@app.get("/page-text")
+async def get_page_text(content_id: str, page_index: int):
+    store = content_store.get(content_id)
+    if not store:
+        raise HTTPException(404, "Content not found.")
+    pages = store["pages"]
+    if page_index < 0 or page_index >= len(pages):
+        raise HTTPException(400, "Invalid page index.")
+    return {"text": pages[page_index]}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
