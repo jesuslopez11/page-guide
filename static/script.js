@@ -15,6 +15,7 @@ const state = {
 
 // ── Audio / TTS ────────────────────────────────────────────────────────────────
 let currentAudio = null;
+let playbackSpeed = 1.0;
 
 function stopAudio() {
   if (currentAudio) {
@@ -61,6 +62,7 @@ async function speak(btn, fetchBody) {
     const blob = await res.blob();
     const url  = URL.createObjectURL(blob);
     currentAudio = new Audio(url);
+    currentAudio.playbackRate = playbackSpeed;
 
     currentAudio.onended = () => {
       URL.revokeObjectURL(url);
@@ -103,8 +105,32 @@ function addTTSBar(explanationText) {
     page_index: state.currentIndex,
   });
 
+  const speedControl = document.createElement('div');
+  speedControl.className = 'speed-control';
+
+  const speedLabel = document.createElement('span');
+  speedLabel.className = 'speed-label';
+  speedLabel.textContent = `${playbackSpeed.toFixed(1)}x`;
+
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '0.5';
+  slider.max = '2';
+  slider.step = '0.25';
+  slider.value = playbackSpeed;
+  slider.className = 'speed-slider';
+  slider.oninput = () => {
+    playbackSpeed = parseFloat(slider.value);
+    speedLabel.textContent = `${playbackSpeed.toFixed(1)}x`;
+    if (currentAudio) currentAudio.playbackRate = playbackSpeed;
+  };
+
+  speedControl.appendChild(slider);
+  speedControl.appendChild(speedLabel);
+
   bar.appendChild(btnExp);
   bar.appendChild(btnPage);
+  bar.appendChild(speedControl);
   output.appendChild(bar);
 }
 

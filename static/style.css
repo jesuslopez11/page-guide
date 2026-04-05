@@ -292,6 +292,23 @@ main {
 .tts-btn:hover    { border-color: var(--accent); color: var(--accent); }
 .tts-btn:disabled { opacity: 0.5; cursor: default; }
 
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.speed-slider {
+  width: 90px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.speed-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  min-width: 30px;
+}
+
 /* Overview box */
 .overview-box {
   max-width: 720px;
