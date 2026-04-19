@@ -48,18 +48,9 @@ def extract_comic_pages(file_path: str) -> list[dict]:
                 image_bytes_list.append(zf.read(name))
 
     elif ext == ".cbr":
-        import subprocess
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = subprocess.run(
-                ["7z", "e", file_path, f"-o{tmpdir}", "-y"],
-                capture_output=True, timeout=60,
-            )
-            if result.returncode != 0:
-                raise Exception(f"Could not extract CBR: {result.stderr.decode(errors='ignore')}")
-            for fname in sorted(os.listdir(tmpdir)):
-                if fname.lower().endswith(IMAGE_EXTS) and not fname.startswith("."):
-                    with open(os.path.join(tmpdir, fname), "rb") as fp:
-                        image_bytes_list.append(fp.read())
+        raise Exception(
+            "CBR not supported here — please convert to CBZ using Calibre (free) and re-upload."
+        )
 
     pages = []
     for i, raw_bytes in enumerate(image_bytes_list):
