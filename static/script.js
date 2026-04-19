@@ -446,7 +446,9 @@ function comicImageHTML(index) {
   if (!state.isComic || !state.contentId) return '';
   const src = `/page-image?content_id=${state.contentId}&page_index=${index}`;
   return `<div class="comic-page-wrap">
-    <img class="comic-page-img" src="${src}" alt="Page ${index + 1}" />
+    <img class="comic-page-img" src="${src}" alt="Page ${index + 1}"
+         onerror="this.style.display='none'; this.nextElementSibling.style.display='block'" />
+    <p style="display:none;color:#888;text-align:center;padding:12px">⚠️ Page image could not be loaded</p>
   </div>`;
 }
 
@@ -466,7 +468,7 @@ function overviewHTML() {
     // Before reading anything, show the book overview
     return `<div class="overview-box" id="context-box">
       <span class="overview-label">About this book</span>
-      ${state.overview}
+      ${marked.parse(state.overview)}
     </div>`;
   }
   return '';
