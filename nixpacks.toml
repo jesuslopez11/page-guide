@@ -1,2 +1,2 @@
 [phases.setup]
-aptPkgs = ["p7zip-full"]
+nixPkgs = ["p7zip"]
