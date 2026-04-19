@@ -48,27 +48,11 @@ def extract_comic_pages(file_path: str) -> list[dict]:
                 image_bytes_list.append(zf.read(name))
 
     elif ext == ".cbr":
-        import subprocess
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Try bsdtar (from libarchive nixpkg), then unar, then 7za as fallbacks
-            for cmd in [
-                ["bsdtar", "-x", "-f", file_path, "-C", tmpdir],
-                ["unar", "-o", tmpdir, "-f", file_path],
-                ["7za", "e", file_path, f"-o{tmpdir}", "-y"],
-            ]:
-                try:
-                    r = subprocess.run(cmd, capture_output=True, timeout=60)
-                    if r.returncode == 0:
-                        break
-                except FileNotFoundError:
-                    continue
-            else:
-                raise Exception("No tool available to extract CBR (tried bsdtar, unar, 7za)")
-
-            for fname in sorted(os.listdir(tmpdir)):
-                if fname.lower().endswith(IMAGE_EXTS) and not fname.startswith("."):
-                    with open(os.path.join(tmpdir, fname), "rb") as fp:
-                        image_bytes_list.append(fp.read())
+        raise Exception(
+            "CBR files are not supported on this server. "
+            "Please convert your CBR to CBZ using Calibre (free) and upload that instead. "
+            "CBZ is identical — just a ZIP instead of RAR."
+        )
 
     pages = []
     for i, raw_bytes in enumerate(image_bytes_list):
