@@ -216,8 +216,9 @@ async function upload(file) {
   try {
     const res = await fetch('/upload', { method: 'POST', body: fd });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Upload failed');
+      let msg = `Upload failed (${res.status})`;
+      try { const err = await res.json(); msg = err.detail || msg; } catch {}
+      throw new Error(msg);
     }
     initBook(await res.json());
   } catch (err) {
