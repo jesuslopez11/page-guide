@@ -299,7 +299,8 @@ async def explain(req: ExplainRequest):
 
     page = pages[req.page_index]
 
-    if len(page["text"].strip()) < 80:
+    is_comic_page = bool(page.get("image_data"))
+    if not is_comic_page and len(page["text"].strip()) < 80:
         raise HTTPException(400, "This page has too little content to explain.")
 
     mode = req.mode if req.mode in PROMPTS else "medium"
