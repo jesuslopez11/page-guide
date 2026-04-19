@@ -11,6 +11,7 @@ const state = {
   summary:       '',   // rolling "story so far" summary
   nextTeaser:    '',   // first few words of the next page
   streaming:     false,
+  isComic:       false,
 };
 
 // ── Audio / TTS ────────────────────────────────────────────────────────────────
@@ -232,6 +233,7 @@ function initBook(data) {
   state.cache        = {};
   state.summaryCache = {};
   state.summary      = '';
+  state.isComic      = data.is_comic || false;
 
   bookTitle.textContent = data.title;
   bookStats.textContent = `${data.total_pages} readable pages`;
@@ -339,7 +341,7 @@ async function loadPage(index, forceRefresh) {
   if (state.streaming) return;
   state.streaming = true;
 
-  output.innerHTML = overviewHTML() + `
+  output.innerHTML = overviewHTML() + comicImageHTML(index) + `
     <div class="loading-wrap">
       <div class="loading-dots"><span></span><span></span><span></span></div>
     </div>`;
@@ -369,7 +371,7 @@ async function loadPage(index, forceRefresh) {
 
     const div = document.createElement('div');
     div.className = 'explanation';
-    output.innerHTML = overviewHTML();
+    output.innerHTML = overviewHTML() + comicImageHTML(index);
     output.appendChild(div);
     output.scrollTop = 0;
 
@@ -434,9 +436,17 @@ function render(markdown) {
   const div = document.createElement('div');
   div.className = 'explanation';
   div.innerHTML = marked.parse(markdown);
-  output.innerHTML = overviewHTML();
+  output.innerHTML = overviewHTML() + comicImageHTML(state.currentIndex);
   output.appendChild(div);
   addTTSBar(div.innerText);
+}
+
+function comicImageHTML(index) {
+  if (!state.isComic || !state.contentId) return '';
+  const src = `/page-image?content_id=${state.contentId}&page_index=${index}`;
+  return `<div class="comic-page-wrap">
+    <img class="comic-page-img" src="${src}" alt="Page ${index + 1}" />
+  </div>`;
 }
 
 function overviewHTML() {

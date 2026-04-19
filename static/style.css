@@ -502,3 +502,21 @@ main {
   /* Drop zone more compact */
   .drop-zone { padding: 16px 10px; }
 }
+
+/* ── Comic page display ──────────────────────────────────────────────────── */
+.comic-page-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 24px 0;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 80vh;
+}
+
+.comic-page-img {
+  max-width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+  display: block;
+}

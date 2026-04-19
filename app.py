@@ -260,12 +260,14 @@ async def upload_file(file: UploadFile = File(...)):
     content_id = str(uuid.uuid4())
     content_store[content_id] = {"title": file.filename, "pages": pages, "overview": overview}
 
+    is_comic = suffix in {".cbr", ".cbz"}
     return {
         "content_id": content_id,
         "title": file.filename,
         "overview": overview,
         "total_pages": len(pages),
         "last_page_num": pages[-1]["page_num"],
+        "is_comic": is_comic,
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"]}
             for p in pages
@@ -473,6 +475,23 @@ async def text_to_speech(req: TTSRequest):
         raise HTTPException(502, f"ElevenLabs error: {e}")
 
     return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+@app.get("/page-image")
+async def get_page_image(content_id: str, page_index: int):
+    from fastapi.responses import Response
+    store = content_store.get(content_id)
+    if not store:
+        raise HTTPException(404, "Content not found.")
+    pages = store["pages"]
+    if page_index < 0 or page_index >= len(pages):
+        raise HTTPException(400, "Invalid page index.")
+    page = pages[page_index]
+    if not page.get("image_data"):
+        raise HTTPException(404, "This page has no image.")
+    import base64
+    image_bytes = base64.b64decode(page["image_data"])
+    return Response(content=image_bytes, media_type=page.get("media_type", "image/jpeg"))
 
 
 @app.get("/page-text")
