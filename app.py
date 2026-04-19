@@ -48,16 +48,15 @@ def extract_comic_pages(file_path: str) -> list[dict]:
                 image_bytes_list.append(zf.read(name))
 
     elif ext == ".cbr":
-        # unrar-cffi: pure Python, bundles the unrar library — no external binary needed
-        from unrar import rarfile as unrar_rf
-        with unrar_rf.RarFile(file_path) as rf:
-            names = sorted([
-                n for n in rf.namelist()
-                if n.lower().endswith(IMAGE_EXTS)
-                and not os.path.basename(n).startswith(".")
-            ])
-            for name in names:
-                image_bytes_list.append(rf.read(name))
+        import libarchive
+        raw = []
+        with libarchive.file_reader(file_path) as archive:
+            for entry in archive:
+                if (entry.pathname.lower().endswith(IMAGE_EXTS)
+                        and not os.path.basename(entry.pathname).startswith(".")):
+                    raw.append((entry.pathname, b"".join(entry.get_blocks())))
+        for _, data in sorted(raw, key=lambda x: x[0]):
+            image_bytes_list.append(data)
 
     pages = []
     for i, raw_bytes in enumerate(image_bytes_list):

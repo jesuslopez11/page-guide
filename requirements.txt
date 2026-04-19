@@ -5,4 +5,4 @@ pymupdf
 python-multipart
 requests
 Pillow
-unrar-cffi
+libarchive-c
