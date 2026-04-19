@@ -4,3 +4,5 @@ anthropic
 pymupdf
 python-multipart
 requests
+rarfile
+Pillow

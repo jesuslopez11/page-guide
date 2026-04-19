@@ -26,6 +26,65 @@ content_store: dict = {}
 
 # ── Extraction ────────────────────────────────────────────────────────────────
 
+def extract_comic_pages(file_path: str) -> list[dict]:
+    """Extract pages from a CBR or CBZ comic book file as base64 images."""
+    import base64
+    import zipfile
+    from PIL import Image
+    import io
+
+    ext = os.path.splitext(file_path)[1].lower()
+    image_bytes_list = []
+
+    if ext == ".cbz":
+        with zipfile.ZipFile(file_path) as zf:
+            names = sorted([
+                n for n in zf.namelist()
+                if n.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
+                and not os.path.basename(n).startswith(".")
+            ])
+            for name in names:
+                image_bytes_list.append(zf.read(name))
+
+    elif ext == ".cbr":
+        import rarfile
+        with rarfile.RarFile(file_path) as rf:
+            names = sorted([
+                n for n in rf.namelist()
+                if n.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
+                and not os.path.basename(n).startswith(".")
+            ])
+            for name in names:
+                image_bytes_list.append(rf.read(name))
+
+    pages = []
+    for i, raw_bytes in enumerate(image_bytes_list):
+        try:
+            img = Image.open(io.BytesIO(raw_bytes))
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            # Resize very large pages to keep memory reasonable
+            max_dim = 1800
+            if max(img.width, img.height) > max_dim:
+                img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=82)
+            final_bytes = buf.getvalue()
+        except Exception:
+            continue  # skip unreadable images
+
+        pages.append({
+            "index": len(pages),
+            "page_num": i + 1,
+            "title": f"Page {i + 1}",
+            "text": "",
+            "image_data": base64.b64encode(final_bytes).decode(),
+            "media_type": "image/jpeg",
+        })
+
+    return pages
+
+
 def extract_pdf_pages(file_path: str) -> list[dict]:
     import fitz
     doc = fitz.open(file_path)
@@ -61,23 +120,52 @@ def extract_text_pages(content: str, words_per_page: int = 300) -> list[dict]:
 
 def generate_book_overview(pages: list[dict]) -> str:
     """Quick one-time call on upload to understand what the book is about."""
-    sample = "\n\n---\n\n".join(
-        f'{p["title"]}:\n{p["text"][:1500]}'
-        for p in pages[:8]
-    )
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=250,
-        messages=[{
-            "role": "user",
-            "content": (
-                f"Here are the first few pages of a book:\n\n{sample}\n\n"
-                "Write 3-4 casual sentences: what is this book about, who are the main "
-                "characters, and what central conflict or question is being set up? "
+    is_comic = bool(pages and pages[0].get("image_data"))
+
+    if is_comic:
+        # Send first few pages as images
+        content = []
+        for p in pages[:6]:
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": p["media_type"],
+                    "data": p["image_data"],
+                },
+            })
+        content.append({
+            "type": "text",
+            "text": (
+                "These are the first few pages of a comic book. "
+                "Write 3-4 casual sentences: what is this comic about, who are the main "
+                "characters, and what's the central story or conflict? "
                 "Plain English only. No markdown. No bullet points. No headers. No bold. Just plain sentences."
             ),
-        }],
-    )
+        })
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=250,
+            messages=[{"role": "user", "content": content}],
+        )
+    else:
+        sample = "\n\n---\n\n".join(
+            f'{p["title"]}:\n{p["text"][:1500]}'
+            for p in pages[:8]
+        )
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=250,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Here are the first few pages of a book:\n\n{sample}\n\n"
+                    "Write 3-4 casual sentences: what is this book about, who are the main "
+                    "characters, and what central conflict or question is being set up? "
+                    "Plain English only. No markdown. No bullet points. No headers. No bold. Just plain sentences."
+                ),
+            }],
+        )
     return msg.content[0].text.strip()
 
 
@@ -130,8 +218,8 @@ Warm, thorough, and conversational throughout.""",
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     suffix = os.path.splitext(file.filename or "")[1].lower()
-    if suffix not in {".pdf", ".txt", ".md"}:
-        raise HTTPException(400, f"Unsupported type '{suffix}'. Upload PDF, TXT, or MD.")
+    if suffix not in {".pdf", ".txt", ".md", ".cbr", ".cbz"}:
+        raise HTTPException(400, f"Unsupported type '{suffix}'. Upload PDF, TXT, MD, CBR, or CBZ.")
 
     raw = await file.read()
 
@@ -145,6 +233,18 @@ async def upload_file(file: UploadFile = File(...)):
             raise HTTPException(500, f"Could not parse PDF: {e}")
         finally:
             os.unlink(tmp_path)
+
+    elif suffix in {".cbr", ".cbz"}:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(raw)
+            tmp_path = tmp.name
+        try:
+            pages = await asyncio.to_thread(extract_comic_pages, tmp_path)
+        except Exception as e:
+            raise HTTPException(500, f"Could not parse comic file: {e}")
+        finally:
+            os.unlink(tmp_path)
+
     else:
         text = raw.decode("utf-8", errors="ignore")
         pages = await asyncio.to_thread(extract_text_pages, text)
@@ -221,13 +321,35 @@ async def explain(req: ExplainRequest):
 
     model = "claude-sonnet-4-6" if mode == "long" else "claude-haiku-4-5-20251001"
 
+    # Build message content — comic pages use vision, text pages use plain text
+    is_comic = bool(page.get("image_data"))
+    if is_comic:
+        # Include previous page image + current page image if available
+        vision_content = []
+        if req.page_index > 0:
+            prev = pages[req.page_index - 1]
+            if prev.get("image_data"):
+                vision_content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": prev["media_type"], "data": prev["image_data"]},
+                })
+                vision_content.append({"type": "text", "text": f"(Previous page — {prev['title']})"})
+        vision_content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": page["media_type"], "data": page["image_data"]},
+        })
+        vision_content.append({"type": "text", "text": user_msg})
+        message_content = vision_content
+    else:
+        message_content = user_msg
+
     def generate():
         try:
             with client.messages.stream(
                 model=model,
                 max_tokens=4000,
                 system=PROMPTS[mode],
-                messages=[{"role": "user", "content": user_msg}],
+                messages=[{"role": "user", "content": message_content}],
                 timeout=120.0,
             ) as stream:
                 for text in stream.text_stream:
@@ -253,19 +375,42 @@ async def summarize(req: SummarizeRequest):
     page = pages[req.page_index]
     current = req.current_summary.strip()
 
-    prompt = (
-        f"{'Current summary:\n' + current + chr(10) + chr(10) if current else ''}"
-        f"New page ({page['title']}):\n{page['text'][:2000]}\n\n"
-        f"Write a 2–4 sentence plain-English summary covering everything up to and including this page. "
-        f"Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
-        f"Return only the summary text, nothing else."
-    )
+    is_comic = bool(page.get("image_data"))
 
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=250,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    if is_comic:
+        summary_prefix = f"Current summary:\n{current}\n\n" if current else ""
+        content = []
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": page["media_type"], "data": page["image_data"]},
+        })
+        content.append({
+            "type": "text",
+            "text": (
+                f"{summary_prefix}This is comic book page {page['page_num']}. "
+                "Write a 2–4 sentence plain-English summary covering everything up to and including this page. "
+                "Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
+                "Return only the summary text, nothing else."
+            ),
+        })
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=250,
+            messages=[{"role": "user", "content": content}],
+        )
+    else:
+        prompt = (
+            f"{'Current summary:\n' + current + chr(10) + chr(10) if current else ''}"
+            f"New page ({page['title']}):\n{page['text'][:2000]}\n\n"
+            f"Write a 2–4 sentence plain-English summary covering everything up to and including this page. "
+            f"Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
+            f"Return only the summary text, nothing else."
+        )
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=250,
+            messages=[{"role": "user", "content": prompt}],
+        )
 
     # Peek at the next page so the UI can show a "coming up" teaser
     next_teaser = ""
