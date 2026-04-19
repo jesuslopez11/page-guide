@@ -1,2 +1,2 @@
 [phases.setup]
-nixPkgs = ["p7zip"]
+nixPkgs = []

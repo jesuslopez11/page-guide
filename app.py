@@ -30,7 +30,6 @@ def extract_comic_pages(file_path: str) -> list[dict]:
     """Extract pages from a CBR or CBZ comic book file as base64 images."""
     import base64
     import zipfile
-    import subprocess
     from PIL import Image
     import io
 
@@ -49,24 +48,16 @@ def extract_comic_pages(file_path: str) -> list[dict]:
                 image_bytes_list.append(zf.read(name))
 
     elif ext == ".cbr":
-        # Use 7-zip to extract RAR — works on all platforms without unrar
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = subprocess.run(
-                ["7z", "e", file_path, f"-o{tmpdir}", "-y"],
-                capture_output=True,
-            )
-            if result.returncode != 0:
-                raise Exception(
-                    f"7z could not extract CBR: {result.stderr.decode(errors='ignore')}"
-                )
-            image_files = sorted([
-                f for f in os.listdir(tmpdir)
-                if f.lower().endswith(IMAGE_EXTS)
-                and not f.startswith(".")
+        # unrar-cffi: pure Python, bundles the unrar library — no external binary needed
+        from unrar import rarfile as unrar_rf
+        with unrar_rf.RarFile(file_path) as rf:
+            names = sorted([
+                n for n in rf.namelist()
+                if n.lower().endswith(IMAGE_EXTS)
+                and not os.path.basename(n).startswith(".")
             ])
-            for fname in image_files:
-                with open(os.path.join(tmpdir, fname), "rb") as fp:
-                    image_bytes_list.append(fp.read())
+            for name in names:
+                image_bytes_list.append(rf.read(name))
 
     pages = []
     for i, raw_bytes in enumerate(image_bytes_list):
