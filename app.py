@@ -48,15 +48,27 @@ def extract_comic_pages(file_path: str) -> list[dict]:
                 image_bytes_list.append(zf.read(name))
 
     elif ext == ".cbr":
-        import libarchive
-        raw = []
-        with libarchive.file_reader(file_path) as archive:
-            for entry in archive:
-                if (entry.pathname.lower().endswith(IMAGE_EXTS)
-                        and not os.path.basename(entry.pathname).startswith(".")):
-                    raw.append((entry.pathname, b"".join(entry.get_blocks())))
-        for _, data in sorted(raw, key=lambda x: x[0]):
-            image_bytes_list.append(data)
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Try bsdtar (from libarchive nixpkg), then unar, then 7za as fallbacks
+            for cmd in [
+                ["bsdtar", "-x", "-f", file_path, "-C", tmpdir],
+                ["unar", "-o", tmpdir, "-f", file_path],
+                ["7za", "e", file_path, f"-o{tmpdir}", "-y"],
+            ]:
+                try:
+                    r = subprocess.run(cmd, capture_output=True, timeout=60)
+                    if r.returncode == 0:
+                        break
+                except FileNotFoundError:
+                    continue
+            else:
+                raise Exception("No tool available to extract CBR (tried bsdtar, unar, 7za)")
+
+            for fname in sorted(os.listdir(tmpdir)):
+                if fname.lower().endswith(IMAGE_EXTS) and not fname.startswith("."):
+                    with open(os.path.join(tmpdir, fname), "rb") as fp:
+                        image_bytes_list.append(fp.read())
 
     pages = []
     for i, raw_bytes in enumerate(image_bytes_list):
