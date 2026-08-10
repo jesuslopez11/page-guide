@@ -415,8 +415,9 @@ async def summarize(req: SummarizeRequest):
             messages=[{"role": "user", "content": content}],
         )
     else:
+        summary_prefix = f"Current summary:\n{current}\n\n" if current else ""
         prompt = (
-            f"{'Current summary:\n' + current + chr(10) + chr(10) if current else ''}"
+            f"{summary_prefix}"
             f"New page ({page['title']}):\n{page['text'][:2000]}\n\n"
             f"Write a 2–4 sentence plain-English summary covering everything up to and including this page. "
             f"Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
