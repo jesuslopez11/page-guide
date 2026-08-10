@@ -278,6 +278,7 @@ jumpBtn.addEventListener('click', () => {
 jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpBtn.click(); });
 
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { document.getElementById('page-image-lightbox')?.remove(); return; }
   if (state.streaming || e.target.tagName === 'INPUT') return;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(state.currentIndex + 1);
   if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToPage(state.currentIndex - 1);
@@ -447,9 +448,20 @@ function pageImageHTML(index) {
   const src = `/page-image?content_id=${state.contentId}&page_index=${index}`;
   return `<div class="page-image-wrap">
     <img class="page-image-img" src="${src}" alt="Page ${index + 1}"
+         onclick="openPageImageLightbox('${src}')"
          onerror="this.style.display='none'; this.nextElementSibling.style.display='block'" />
     <p style="display:none;color:#888;text-align:center;padding:12px">⚠️ Page image could not be loaded</p>
   </div>`;
+}
+
+function openPageImageLightbox(src) {
+  document.getElementById('page-image-lightbox')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'page-image-lightbox';
+  overlay.className = 'page-image-lightbox';
+  overlay.innerHTML = `<img src="${src}" alt="Enlarged page" />`;
+  overlay.addEventListener('click', () => overlay.remove());
+  document.body.appendChild(overlay);
 }
 
 function overviewHTML() {
