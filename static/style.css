@@ -535,8 +535,10 @@ main {
 }
 
 .page-image-lightbox img {
-  max-width: 90vw;
-  max-height: 40vh;
+  max-width: 92vw;
+  max-height: 92vh;
+  width: auto;
+  height: auto;
   object-fit: contain;
   border-radius: 8px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.6);
