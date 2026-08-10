@@ -279,7 +279,7 @@ jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpBtn.clic
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { document.getElementById('page-image-lightbox')?.remove(); return; }
-  if (state.streaming || e.target.tagName === 'INPUT') return;
+  if (e.target.tagName === 'INPUT') return;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(state.currentIndex + 1);
   if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToPage(state.currentIndex - 1);
 });
@@ -331,8 +331,21 @@ function updateNearbyPages() {
 }
 
 // ── Explanation ───────────────────────────────────────────────────────────────
+// Navigating away mid-stream cancels the old request instead of blocking the
+// new one — activeLoadToken marks which call is still "current" so a
+// superseded call's late-arriving data never overwrites the new page's view.
+let activeLoadToken = 0;
+let activeAbortController = null;
+
 async function loadPage(index, forceRefresh) {
   const key = `${index}-${state.mode}`;
+
+  // Whatever was previously loading is no longer wanted — cancel it so it
+  // stops burning tokens and can't race with what we're about to show.
+  if (activeAbortController) activeAbortController.abort();
+  activeAbortController = null;
+  const myToken = ++activeLoadToken;
+  const isCurrent = () => myToken === activeLoadToken;
 
   if (!forceRefresh && state.cache[key]) {
     render(state.cache[key]);
@@ -340,7 +353,8 @@ async function loadPage(index, forceRefresh) {
     return;
   }
 
-  if (state.streaming) return;
+  const controller = new AbortController();
+  activeAbortController = controller;
   state.streaming = true;
 
   output.innerHTML = overviewHTML() + pageImageHTML(index) + `
@@ -358,12 +372,13 @@ async function loadPage(index, forceRefresh) {
         mode:       state.mode,
         summary:    state.summary,
       }),
+      signal: controller.signal,
     });
+    if (!isCurrent()) return;
 
     if (!res.ok) {
       const err = await res.json();
       output.innerHTML = `<div class="error-box">${err.detail || 'Something went wrong.'}</div>`;
-      state.streaming = false;
       return;
     }
 
@@ -379,16 +394,16 @@ async function loadPage(index, forceRefresh) {
 
     while (true) {
       const { done, value } = await reader.read();
+      if (!isCurrent()) { reader.cancel(); return; }
       if (done) break;
       for (const line of decoder.decode(value).split('\n')) {
         if (!line.startsWith('data: ')) continue;
         const payload = line.slice(6);
-        if (payload === '[DONE]') { state.streaming = false; break; }
+        if (payload === '[DONE]') break;
         try {
           const obj = JSON.parse(payload);
           if (obj.error) {
             div.innerHTML = `<div class="error-box">${obj.error}</div>`;
-            state.streaming = false;
             return;
           }
           accumulated += obj.text;
@@ -405,10 +420,11 @@ async function loadPage(index, forceRefresh) {
     // Update the rolling summary in the background after the page is read
     updateSummary(index);
   } catch (err) {
+    if (err.name === 'AbortError') return; // superseded by a newer page load
     output.innerHTML = `<div class="error-box">${err.message}</div>`;
+  } finally {
+    if (isCurrent()) state.streaming = false;
   }
-
-  state.streaming = false;
 }
 
 async function updateSummary(pageIndex) {
