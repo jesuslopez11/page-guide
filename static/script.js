@@ -291,7 +291,11 @@ function goToPage(index) {
 
   stopAudio(); // stop any playing audio when navigating
 
-  // Restore the best available summary for context when jumping around
+  // Restore the best available summary for context when jumping around —
+  // reset first so a page with no earlier cached summary (e.g. jumping
+  // back before anything you've read) doesn't inherit stale, later context.
+  state.summary    = '';
+  state.nextTeaser = '';
   for (let i = index - 1; i >= 0; i--) {
     if (state.summaryCache[i]) { state.summary = state.summaryCache[i]; break; }
   }
@@ -440,12 +444,18 @@ async function updateSummary(pageIndex) {
     });
     if (res.ok) {
       const data = await res.json();
-      state.summary    = data.summary;
-      state.nextTeaser = data.next_teaser || '';
       state.summaryCache[pageIndex] = data.summary;
-      // Refresh the context box live without re-rendering the whole page
-      const box = document.getElementById('context-box');
-      if (box) box.outerHTML = overviewHTML();
+
+      // Only touch the live "story so far" context if the user hasn't
+      // already navigated elsewhere while this request was in flight —
+      // otherwise a late response would overwrite the correct context
+      // for whatever page they're actually looking at now.
+      if (pageIndex === state.currentIndex) {
+        state.summary    = data.summary;
+        state.nextTeaser = data.next_teaser || '';
+        const box = document.getElementById('context-box');
+        if (box) box.outerHTML = overviewHTML();
+      }
     }
   } catch { /* fail silently — summary is nice-to-have, not critical */ }
 }
