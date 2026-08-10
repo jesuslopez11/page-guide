@@ -97,6 +97,17 @@ def extract_pdf_pages(file_path: str) -> list[dict]:
     return pages
 
 
+def render_pdf_page_image(pdf_bytes: bytes, page_num: int) -> bytes:
+    """Rasterize a single PDF page (1-indexed) to a JPEG image, on demand."""
+    import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        pix = doc[page_num - 1].get_pixmap(matrix=fitz.Matrix(2, 2))
+        return pix.tobytes("jpeg")
+    finally:
+        doc.close()
+
+
 def extract_text_pages(content: str, words_per_page: int = 300) -> list[dict]:
     words = content.split()
     pages = []
@@ -253,9 +264,15 @@ async def upload_file(file: UploadFile = File(...)):
         overview = ""
 
     content_id = str(uuid.uuid4())
-    content_store[content_id] = {"title": file.filename, "pages": pages, "overview": overview}
+    content_store[content_id] = {
+        "title": file.filename,
+        "pages": pages,
+        "overview": overview,
+        "pdf_bytes": raw if suffix == ".pdf" else None,
+    }
 
     is_comic = suffix in {".cbr", ".cbz"}
+    has_page_images = is_comic or suffix == ".pdf"
     return {
         "content_id": content_id,
         "title": file.filename,
@@ -263,6 +280,7 @@ async def upload_file(file: UploadFile = File(...)):
         "total_pages": len(pages),
         "last_page_num": pages[-1]["page_num"],
         "is_comic": is_comic,
+        "has_page_images": has_page_images,
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"]}
             for p in pages
@@ -483,11 +501,21 @@ async def get_page_image(content_id: str, page_index: int):
     if page_index < 0 or page_index >= len(pages):
         raise HTTPException(400, "Invalid page index.")
     page = pages[page_index]
-    if not page.get("image_data"):
-        raise HTTPException(404, "This page has no image.")
-    import base64
-    image_bytes = base64.b64decode(page["image_data"])
-    return Response(content=image_bytes, media_type=page.get("media_type", "image/jpeg"))
+
+    if page.get("image_data"):
+        import base64
+        image_bytes = base64.b64decode(page["image_data"])
+        return Response(content=image_bytes, media_type=page.get("media_type", "image/jpeg"))
+
+    pdf_bytes = store.get("pdf_bytes")
+    if pdf_bytes:
+        try:
+            image_bytes = await asyncio.to_thread(render_pdf_page_image, pdf_bytes, page["page_num"])
+        except Exception as e:
+            raise HTTPException(500, f"Could not render page image: {e}")
+        return Response(content=image_bytes, media_type="image/jpeg")
+
+    raise HTTPException(404, "This page has no image.")
 
 
 @app.get("/page-text")

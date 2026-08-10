@@ -503,8 +503,8 @@ main {
   .drop-zone { padding: 16px 10px; }
 }
 
-/* ── Comic page display ──────────────────────────────────────────────────── */
-.comic-page-wrap {
+/* ── Page image display (comics + PDF page renders) ──────────────────────── */
+.page-image-wrap {
   display: flex;
   justify-content: center;
   margin: 0 0 24px 0;
@@ -514,7 +514,7 @@ main {
   max-height: 80vh;
 }
 
-.comic-page-img {
+.page-image-img {
   max-width: 100%;
   max-height: 80vh;
   object-fit: contain;
