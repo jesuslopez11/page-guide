@@ -460,7 +460,7 @@ function overviewHTML() {
       : '';
     return `<div class="overview-box" id="context-box">
       <span class="overview-label">Where you are</span>
-      <span class="overview-summary">${state.summary}</span>
+      <div class="overview-summary">${marked.parse(state.summary)}</div>
       ${teaser}
     </div>`;
   }
