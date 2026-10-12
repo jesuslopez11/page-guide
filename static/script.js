@@ -19,6 +19,20 @@ const state = {
 let playbackSpeed = 1.0;
 let activeBtn = null;
 
+// Voices load asynchronously in most browsers — cache them as soon as they're
+// ready so picking a Spanish voice doesn't race an empty list on first use.
+let cachedVoices = speechSynthesis.getVoices();
+speechSynthesis.onvoiceschanged = () => { cachedVoices = speechSynthesis.getVoices(); };
+
+function pickVoice(lang) {
+  const voices = cachedVoices.length ? cachedVoices : speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  const exact = voices.find(v => v.lang.toLowerCase() === lang.toLowerCase());
+  if (exact) return exact;
+  const base = lang.split('-')[0].toLowerCase();
+  return voices.find(v => v.lang.toLowerCase().startsWith(base)) || null;
+}
+
 function stopAudio() {
   speechSynthesis.cancel();
   activeBtn = null;
@@ -74,6 +88,11 @@ function speakText(btn, text) {
   const panel = showReadingPanel(text);
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = playbackSpeed;
+
+  const lang = state.language === 'spanish' ? 'es-MX' : 'en-US';
+  utterance.lang = lang;
+  const voice = pickVoice(lang);
+  if (voice) utterance.voice = voice;
 
   utterance.onboundary = e => {
     if (e.name === 'word') highlightWord(panel, e.charIndex);

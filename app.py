@@ -20,6 +20,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def no_cache_frontend(request, call_next):
+    """Force the browser to always revalidate index.html/script.js/style.css
+    with the server instead of serving a stale cached copy after a deploy."""
+    response = await call_next(request)
+    if request.url.path in ("/", "/index.html", "/script.js", "/style.css"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 client = anthropic.Anthropic()
 content_store: dict = {}
 
