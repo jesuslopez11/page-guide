@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Page Guide</title>
-  <link rel="stylesheet" href="/style.css?v=4" />
+  <link rel="stylesheet" href="/style.css?v=5" />
 </head>
 <body>
 
@@ -17,6 +17,12 @@
       <div class="drop-hint">PDF · TXT · MD · CBR · CBZ</div>
     </div>
     <input type="file" id="file-input" accept=".pdf,.txt,.md,.cbr,.cbz" hidden />
+
+    <div class="url-divider">or paste a link</div>
+    <div class="jump-row">
+      <input type="url" id="url-input" placeholder="https://example.com/article" />
+      <button id="url-btn">→</button>
+    </div>
 
     <div id="book-section" hidden>
       <div id="book-title" class="book-title"></div>
@@ -65,6 +71,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="/script.js?v=6"></script>
+  <script src="/script.js?v=7"></script>
 </body>
 </html>

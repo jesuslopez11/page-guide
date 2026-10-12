@@ -124,6 +124,56 @@ def extract_text_pages(content: str, words_per_page: int = 300) -> list[dict]:
     return pages
 
 
+def validate_public_url(url: str) -> None:
+    """Reject anything that isn't a plain http(s) link to a public address."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Please enter a valid http:// or https:// link.")
+
+    try:
+        addrs = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror:
+        raise ValueError("Could not resolve that link's address.")
+
+    for family, _, _, _, sockaddr in addrs:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if not ip.is_global:
+            raise ValueError("That link isn't a public web address.")
+
+
+def fetch_webpage_pages(url: str) -> tuple[str, list[dict]]:
+    """Fetch a web page and return (title, chunked pages) from its readable text."""
+    import requests as req_lib
+    from bs4 import BeautifulSoup
+
+    resp = req_lib.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; PageGuide/1.0)"},
+        timeout=15,
+        allow_redirects=True,
+    )
+    resp.raise_for_status()
+
+    if "html" not in resp.headers.get("content-type", "").lower():
+        raise ValueError("That link doesn't point to a web page.")
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    title = soup.title.string.strip() if soup.title and soup.title.string else url
+
+    for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form", "noscript", "svg"]):
+        tag.decompose()
+
+    article = soup.find("article") or soup.find("main") or soup.body or soup
+    lines = [line.strip() for line in article.get_text(separator="\n").splitlines()]
+    text = "\n".join(line for line in lines if line)
+
+    return title, extract_text_pages(text)
+
+
 def generate_book_overview(pages: list[dict]) -> str:
     """Quick one-time call on upload to understand what the book is about."""
     is_comic = bool(pages and pages[0].get("image_data"))
@@ -281,6 +331,59 @@ async def upload_file(file: UploadFile = File(...)):
         "last_page_num": pages[-1]["page_num"],
         "is_comic": is_comic,
         "has_page_images": has_page_images,
+        "pages": [
+            {"index": p["index"], "title": p["title"], "page_num": p["page_num"]}
+            for p in pages
+        ],
+    }
+
+
+class UrlUploadRequest(BaseModel):
+    url: str
+
+
+@app.post("/upload-url")
+async def upload_url(req: UrlUploadRequest):
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(400, "Please provide a link.")
+
+    try:
+        await asyncio.to_thread(validate_public_url, url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    try:
+        title, pages = await asyncio.to_thread(fetch_webpage_pages, url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch that page: {e}")
+
+    if not pages:
+        raise HTTPException(400, "No readable content found on that page.")
+
+    try:
+        overview = await asyncio.to_thread(generate_book_overview, pages)
+    except Exception:
+        overview = ""
+
+    content_id = str(uuid.uuid4())
+    content_store[content_id] = {
+        "title": title,
+        "pages": pages,
+        "overview": overview,
+        "pdf_bytes": None,
+    }
+
+    return {
+        "content_id": content_id,
+        "title": title,
+        "overview": overview,
+        "total_pages": len(pages),
+        "last_page_num": pages[-1]["page_num"],
+        "is_comic": False,
+        "has_page_images": False,
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"]}
             for p in pages

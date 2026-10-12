@@ -67,6 +67,13 @@ body {
 .drop-icon  { font-size: 22px; margin-bottom: 6px; }
 .drop-hint  { font-size: 11px; margin-top: 4px; }
 
+.url-divider {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  margin: 10px 0 2px;
+}
+
 .book-title {
   font-size: 13px;
   font-weight: 600;

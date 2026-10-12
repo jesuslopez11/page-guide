@@ -182,6 +182,8 @@ const nextBottom     = $('next-bottom');
 const menuBtn        = $('menu-btn');
 const sidebar        = $('sidebar');
 const sidebarOverlay = $('sidebar-overlay');
+const urlInput       = $('url-input');
+const urlBtn         = $('url-btn');
 
 // ── Mobile sidebar ────────────────────────────────────────────────────────────
 function openSidebar()  {
@@ -223,6 +225,35 @@ async function upload(file) {
     initBook(await res.json());
   } catch (err) {
     dropZone.querySelector('.drop-label').textContent = `Error: ${err.message}`;
+  }
+}
+
+urlBtn.addEventListener('click', () => {
+  const url = urlInput.value.trim();
+  if (url) uploadUrl(url);
+});
+urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') urlBtn.click(); });
+
+async function uploadUrl(url) {
+  dropZone.querySelector('.drop-label').textContent = 'Fetching page…';
+  urlBtn.disabled = true;
+  try {
+    const res = await fetch('/upload-url', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ url }),
+    });
+    if (!res.ok) {
+      let msg = `Fetch failed (${res.status})`;
+      try { const err = await res.json(); msg = err.detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    initBook(await res.json());
+    urlInput.value = '';
+  } catch (err) {
+    dropZone.querySelector('.drop-label').textContent = `Error: ${err.message}`;
+  } finally {
+    urlBtn.disabled = false;
   }
 }
 
