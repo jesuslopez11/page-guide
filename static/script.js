@@ -18,6 +18,7 @@ const state = {
 // ── Audio / TTS ────────────────────────────────────────────────────────────────
 let playbackSpeed = 1.0;
 let activeBtn = null;
+let currentTTSAudio = null; // the <audio> element when playing ElevenLabs (Spanish) audio
 
 // Voices load asynchronously in most browsers — cache them as soon as they're
 // ready so picking a Spanish voice doesn't race an empty list on first use.
@@ -35,6 +36,10 @@ function pickVoice(lang) {
 
 function stopAudio() {
   speechSynthesis.cancel();
+  if (currentTTSAudio) {
+    currentTTSAudio.pause();
+    currentTTSAudio = null;
+  }
   activeBtn = null;
   document.querySelectorAll('.tts-btn').forEach(btn => {
     btn.disabled = false;
@@ -120,6 +125,73 @@ function speakText(btn, text) {
   speechSynthesis.speak(utterance);
 }
 
+// Spanish read-aloud goes through the backend (ElevenLabs) instead of the
+// browser's local voices, since most machines don't have a Spanish voice
+// installed — English keeps using the free browser voices.
+async function speakViaElevenLabs(btn, text) {
+  if (btn.dataset.playing === '1') {
+    if (currentTTSAudio) {
+      if (currentTTSAudio.paused) {
+        currentTTSAudio.play();
+        btn.textContent = '⏸ Pause';
+      } else {
+        currentTTSAudio.pause();
+        btn.textContent = '▶ Resume';
+      }
+    }
+    return;
+  }
+
+  stopAudio();
+  btn.disabled = true;
+  btn.textContent = '⏳ Loading…';
+
+  try {
+    const res = await fetch('/tts', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text, language: state.language }),
+    });
+    if (!res.ok) {
+      let msg = 'Could not generate audio.';
+      try { const err = await res.json(); msg = err.detail || msg; } catch {}
+      throw new Error(msg);
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.playbackRate = playbackSpeed;
+    currentTTSAudio = audio;
+
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      btn.disabled = false;
+      btn.dataset.playing = '';
+      btn.textContent = btn.dataset.label;
+      activeBtn = null;
+      currentTTSAudio = null;
+    };
+    audio.onended = cleanup;
+    audio.onerror = cleanup;
+
+    activeBtn = btn;
+    btn.dataset.playing = '1';
+    btn.disabled = false;
+    btn.textContent = '⏸ Pause';
+    audio.play();
+  } catch (err) {
+    btn.disabled = false;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+  }
+}
+
+function ttsPlay(btn, text) {
+  if (state.language === 'spanish') speakViaElevenLabs(btn, text);
+  else speakText(btn, text);
+}
+
 function addTTSBar(explanationText) {
   document.getElementById('tts-bar')?.remove();
   const bar = document.createElement('div');
@@ -130,14 +202,14 @@ function addTTSBar(explanationText) {
   btnExp.className = 'tts-btn';
   btnExp.dataset.label = '🔊 Read explanation';
   btnExp.textContent   = '🔊 Read explanation';
-  btnExp.onclick = () => speakText(btnExp, explanationText);
+  btnExp.onclick = () => ttsPlay(btnExp, explanationText);
 
   const btnPage = document.createElement('button');
   btnPage.className = 'tts-btn';
   btnPage.dataset.label = '📖 Read page text';
   btnPage.textContent   = '📖 Read page text';
   btnPage.onclick = async () => {
-    if (btnPage.dataset.playing === '1') { speakText(btnPage, ''); return; }
+    if (btnPage.dataset.playing === '1') { ttsPlay(btnPage, ''); return; }
     btnPage.textContent = '⏳ Loading…';
     btnPage.disabled = true;
     try {
@@ -145,7 +217,7 @@ function addTTSBar(explanationText) {
       const data = await res.json();
       btnPage.disabled = false;
       btnPage.textContent = btnPage.dataset.label;
-      speakText(btnPage, data.text);
+      ttsPlay(btnPage, data.text);
     } catch {
       btnPage.disabled = false;
       btnPage.textContent = btnPage.dataset.label;
@@ -169,6 +241,7 @@ function addTTSBar(explanationText) {
   slider.oninput = () => {
     playbackSpeed = parseFloat(slider.value);
     speedLabel.textContent = `${playbackSpeed.toFixed(1)}x`;
+    if (currentTTSAudio) currentTTSAudio.playbackRate = playbackSpeed;
   };
 
   speedControl.appendChild(slider);

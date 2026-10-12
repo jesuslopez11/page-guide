@@ -595,11 +595,20 @@ async def summarize(req: SummarizeRequest):
     return {"summary": msg.content[0].text.strip(), "next_teaser": next_teaser}
 
 
+DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs "Rachel" (English)
+# Set ELEVENLABS_VOICE_ID_ES in your environment to a voice from your own
+# ElevenLabs Voice Library for a proper Spanish/Mexican-accented voice —
+# falls back to the English default (still intelligible, multilingual model)
+# if not configured.
+SPANISH_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID_ES", DEFAULT_VOICE_ID)
+
+
 class TTSRequest(BaseModel):
     text: str = ""           # explanation text (sent from frontend)
     content_id: str = ""     # for reading raw page text
     page_index: int = -1     # for reading raw page text
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs Rachel (default)
+    language: str = "english"
+    voice_id: str = ""       # explicit override; empty = pick by language
 
 
 @app.post("/tts")
@@ -610,6 +619,10 @@ async def text_to_speech(req: TTSRequest):
     api_key = os.getenv("ELEVENLABS_API_KEY", "")
     if not api_key:
         raise HTTPException(500, "ELEVENLABS_API_KEY is not set. Add it to your environment variables.")
+
+    voice_id = req.voice_id or (
+        SPANISH_VOICE_ID if normalize_language(req.language) == "spanish" else DEFAULT_VOICE_ID
+    )
 
     # Get the text to speak
     if req.text.strip():
@@ -625,7 +638,7 @@ async def text_to_speech(req: TTSRequest):
         raise HTTPException(400, "Provide either text or content_id + page_index.")
 
     def call_elevenlabs():
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{req.voice_id}"
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         r = req_lib.post(
             url,
             headers={"xi-api-key": api_key, "Content-Type": "application/json"},
