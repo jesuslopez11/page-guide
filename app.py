@@ -80,9 +80,7 @@ def extract_comic_pages(file_path: str) -> list[dict]:
     return pages
 
 
-def extract_pdf_pages(file_path: str) -> list[dict]:
-    import fitz
-    doc = fitz.open(file_path)
+def _pdf_pages_from_doc(doc) -> list[dict]:
     pages = []
     for i in range(len(doc)):
         text = doc[i].get_text().strip()
@@ -93,8 +91,25 @@ def extract_pdf_pages(file_path: str) -> list[dict]:
                 "title": f"Page {i + 1}",
                 "text": text[:50000],
             })
-    doc.close()
     return pages
+
+
+def extract_pdf_pages(file_path: str) -> list[dict]:
+    import fitz
+    doc = fitz.open(file_path)
+    try:
+        return _pdf_pages_from_doc(doc)
+    finally:
+        doc.close()
+
+
+def extract_pdf_pages_from_bytes(pdf_bytes: bytes) -> list[dict]:
+    import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        return _pdf_pages_from_doc(doc)
+    finally:
+        doc.close()
 
 
 def render_pdf_page_image(pdf_bytes: bytes, page_num: int) -> bytes:
@@ -145,21 +160,30 @@ def validate_public_url(url: str) -> None:
             raise ValueError("That link isn't a public web address.")
 
 
-def fetch_webpage_pages(url: str) -> tuple[str, list[dict]]:
-    """Fetch a web page and return (title, chunked pages) from its readable text."""
+def fetch_url_content(url: str) -> dict:
+    """Fetch a link and return pages from it — handles both web pages and direct PDF links."""
     import requests as req_lib
     from bs4 import BeautifulSoup
+    from urllib.parse import urlparse
 
     resp = req_lib.get(
         url,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; PageGuide/1.0)"},
-        timeout=15,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+        timeout=20,
         allow_redirects=True,
     )
     resp.raise_for_status()
 
-    if "html" not in resp.headers.get("content-type", "").lower():
-        raise ValueError("That link doesn't point to a web page.")
+    content_type = resp.headers.get("content-type", "").lower()
+
+    if "pdf" in content_type or urlparse(url).path.lower().endswith(".pdf"):
+        pdf_bytes = resp.content
+        pages = extract_pdf_pages_from_bytes(pdf_bytes)
+        title = os.path.basename(urlparse(url).path) or url
+        return {"title": title, "pages": pages, "pdf_bytes": pdf_bytes, "has_page_images": True}
+
+    if "html" not in content_type:
+        raise ValueError("That link isn't a web page or PDF I can read.")
 
     soup = BeautifulSoup(resp.text, "html.parser")
     title = soup.title.string.strip() if soup.title and soup.title.string else url
@@ -171,7 +195,7 @@ def fetch_webpage_pages(url: str) -> tuple[str, list[dict]]:
     lines = [line.strip() for line in article.get_text(separator="\n").splitlines()]
     text = "\n".join(line for line in lines if line)
 
-    return title, extract_text_pages(text)
+    return {"title": title, "pages": extract_text_pages(text), "pdf_bytes": None, "has_page_images": False}
 
 
 def generate_book_overview(pages: list[dict]) -> str:
@@ -354,14 +378,15 @@ async def upload_url(req: UrlUploadRequest):
         raise HTTPException(400, str(e))
 
     try:
-        title, pages = await asyncio.to_thread(fetch_webpage_pages, url)
+        content = await asyncio.to_thread(fetch_url_content, url)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(502, f"Could not fetch that page: {e}")
+        raise HTTPException(502, f"Could not fetch that link: {e}")
 
+    title, pages = content["title"], content["pages"]
     if not pages:
-        raise HTTPException(400, "No readable content found on that page.")
+        raise HTTPException(400, "No readable content found at that link.")
 
     try:
         overview = await asyncio.to_thread(generate_book_overview, pages)
@@ -373,7 +398,7 @@ async def upload_url(req: UrlUploadRequest):
         "title": title,
         "pages": pages,
         "overview": overview,
-        "pdf_bytes": None,
+        "pdf_bytes": content["pdf_bytes"],
     }
 
     return {
@@ -383,7 +408,7 @@ async def upload_url(req: UrlUploadRequest):
         "total_pages": len(pages),
         "last_page_num": pages[-1]["page_num"],
         "is_comic": False,
-        "has_page_images": False,
+        "has_page_images": content["has_page_images"],
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"]}
             for p in pages
