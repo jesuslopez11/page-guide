@@ -5,7 +5,7 @@ import tempfile
 import asyncio
 
 import anthropic
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -198,9 +198,18 @@ def fetch_url_content(url: str) -> dict:
     return {"title": title, "pages": extract_text_pages(text), "pdf_bytes": None, "has_page_images": False}
 
 
-def generate_book_overview(pages: list[dict]) -> str:
+LANGUAGE_NAMES = {"english": "English", "spanish": "Spanish"}
+
+
+def normalize_language(value: str) -> str:
+    value = (value or "").strip().lower()
+    return value if value in LANGUAGE_NAMES else "english"
+
+
+def generate_book_overview(pages: list[dict], language: str = "english") -> str:
     """Quick one-time call on upload to understand what the book is about."""
     is_comic = bool(pages and pages[0].get("image_data"))
+    lang_name = LANGUAGE_NAMES[normalize_language(language)]
 
     if is_comic:
         # Send first few pages as images
@@ -220,7 +229,7 @@ def generate_book_overview(pages: list[dict]) -> str:
                 "These are the first few pages of a comic book. "
                 "Write 3-4 casual sentences: what is this comic about, who are the main "
                 "characters, and what's the central story or conflict? "
-                "Plain English only. No markdown. No bullet points. No headers. No bold. Just plain sentences."
+                f"Write in plain, casual {lang_name}. No markdown. No bullet points. No headers. No bold. Just plain sentences."
             ),
         })
         msg = client.messages.create(
@@ -242,7 +251,7 @@ def generate_book_overview(pages: list[dict]) -> str:
                     f"Here are the first few pages of a book:\n\n{sample}\n\n"
                     "Write 3-4 casual sentences: what is this book about, who are the main "
                     "characters, and what central conflict or question is being set up? "
-                    "Plain English only. No markdown. No bullet points. No headers. No bold. Just plain sentences."
+                    f"Write in plain, casual {lang_name}. No markdown. No bullet points. No headers. No bold. Just plain sentences."
                 ),
             }],
         )
@@ -261,7 +270,7 @@ Important: pages are physical PDF pages, so they often cut off mid-sentence. Tha
 
 Write 3-4 short casual paragraphs. No headers. No bullet points. No bold labels. No section names. No "Bridge:" or "Bottom line:" prefixes. Just talk to them like you're sending a voice note.
 
-Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then explain what's happening on this page in plain English, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"). Let your last sentence land on what this page was building toward — even if it got cut off.
+Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then explain what's happening on this page in plain, simple language, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"). Let your last sentence land on what this page was building toward — even if it got cut off.
 
 Under 150 words. Casual and warm.""",
 
@@ -296,7 +305,7 @@ Warm, thorough, and conversational throughout.""",
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), language: str = Form("english")):
     suffix = os.path.splitext(file.filename or "")[1].lower()
     if suffix not in {".pdf", ".txt", ".md", ".cbr", ".cbz"}:
         raise HTTPException(400, f"Unsupported type '{suffix}'. Upload PDF, TXT, MD, CBR, or CBZ.")
@@ -333,7 +342,7 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(400, "No readable content found.")
 
     try:
-        overview = await asyncio.to_thread(generate_book_overview, pages)
+        overview = await asyncio.to_thread(generate_book_overview, pages, language)
     except Exception:
         overview = ""
 
@@ -364,6 +373,7 @@ async def upload_file(file: UploadFile = File(...)):
 
 class UrlUploadRequest(BaseModel):
     url: str
+    language: str = "english"
 
 
 @app.post("/upload-url")
@@ -389,7 +399,7 @@ async def upload_url(req: UrlUploadRequest):
         raise HTTPException(400, "No readable content found at that link.")
 
     try:
-        overview = await asyncio.to_thread(generate_book_overview, pages)
+        overview = await asyncio.to_thread(generate_book_overview, pages, req.language)
     except Exception:
         overview = ""
 
@@ -421,12 +431,14 @@ class ExplainRequest(BaseModel):
     page_index: int
     mode: str
     summary: str = ""  # rolling "story so far" built up as the user reads
+    language: str = "english"
 
 
 class SummarizeRequest(BaseModel):
     content_id: str
     page_index: int
     current_summary: str = ""
+    language: str = "english"
 
 
 @app.post("/explain")
@@ -448,6 +460,11 @@ async def explain(req: ExplainRequest):
         raise HTTPException(400, "This page has too little content to explain.")
 
     mode = req.mode if req.mode in PROMPTS else "medium"
+    lang_name = LANGUAGE_NAMES[normalize_language(req.language)]
+    system_prompt = (
+        PROMPTS[mode]
+        + f"\n\nWrite your entire response in {lang_name}, regardless of what language the page itself is written in."
+    )
 
     # Build context: book overview → rolling summary → previous page → current page
     parts = []
@@ -492,7 +509,7 @@ async def explain(req: ExplainRequest):
             with client.messages.stream(
                 model=model,
                 max_tokens=4000,
-                system=PROMPTS[mode],
+                system=system_prompt,
                 messages=[{"role": "user", "content": message_content}],
                 timeout=120.0,
             ) as stream:
@@ -518,6 +535,7 @@ async def summarize(req: SummarizeRequest):
 
     page = pages[req.page_index]
     current = req.current_summary.strip()
+    lang_name = LANGUAGE_NAMES[normalize_language(req.language)]
 
     is_comic = bool(page.get("image_data"))
 
@@ -532,7 +550,7 @@ async def summarize(req: SummarizeRequest):
             "type": "text",
             "text": (
                 f"{summary_prefix}This is comic book page {page['page_num']}. "
-                "Write a 2–4 sentence plain-English summary covering everything up to and including this page. "
+                f"Write a 2–4 sentence plain, casual {lang_name} summary covering everything up to and including this page. "
                 "Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
                 "Return only the summary text, nothing else."
             ),
@@ -547,7 +565,7 @@ async def summarize(req: SummarizeRequest):
         prompt = (
             f"{summary_prefix}"
             f"New page ({page['title']}):\n{page['text'][:2000]}\n\n"
-            f"Write a 2–4 sentence plain-English summary covering everything up to and including this page. "
+            f"Write a 2–4 sentence plain, casual {lang_name} summary covering everything up to and including this page. "
             f"Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
             f"Return only the summary text, nothing else."
         )

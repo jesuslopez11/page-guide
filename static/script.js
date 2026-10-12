@@ -6,7 +6,8 @@ const state = {
   overview:      '',   // generated once on upload — what this book is about
   currentIndex:  0,
   mode:          'short',
-  cache:         {},   // `${index}-${mode}` => markdown string
+  language:      'english',
+  cache:         {},   // `${index}-${mode}-${language}` => markdown string
   summaryCache:  {},   // pageIndex => summary after reading that page
   summary:       '',   // rolling "story so far" summary
   nextTeaser:    '',   // first few words of the next page
@@ -170,6 +171,7 @@ const jumpInput      = $('jump-input');
 const jumpBtn        = $('jump-btn');
 const nearbyPages    = $('nearby-pages');
 const depthBtns      = document.querySelectorAll('.depth-btn');
+const langBtns       = document.querySelectorAll('.lang-btn');
 const reExplain      = $('re-explain');
 const pageNav        = $('page-nav');
 const pageLabel      = $('page-label');
@@ -215,6 +217,7 @@ async function upload(file) {
   dropZone.querySelector('.drop-label').textContent = 'Uploading…';
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('language', state.language);
   try {
     const res = await fetch('/upload', { method: 'POST', body: fd });
     if (!res.ok) {
@@ -241,7 +244,7 @@ async function uploadUrl(url) {
     const res = await fetch('/upload-url', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ url }),
+      body:    JSON.stringify({ url, language: state.language }),
     });
     if (!res.ok) {
       let msg = `Fetch failed (${res.status})`;
@@ -288,6 +291,15 @@ depthBtns.forEach(btn => {
     btn.classList.add('active');
     state.mode = btn.dataset.mode;
     loadPage(state.currentIndex, true);
+  });
+});
+
+langBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    langBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.language = btn.dataset.lang;
+    if (state.contentId) loadPage(state.currentIndex, true);
   });
 });
 
@@ -373,7 +385,7 @@ let activeLoadToken = 0;
 let activeAbortController = null;
 
 async function loadPage(index, forceRefresh) {
-  const key = `${index}-${state.mode}`;
+  const key = `${index}-${state.mode}-${state.language}`;
 
   // Whatever was previously loading is no longer wanted — cancel it so it
   // stops burning tokens and can't race with what we're about to show.
@@ -406,6 +418,7 @@ async function loadPage(index, forceRefresh) {
         page_index: index,
         mode:       state.mode,
         summary:    state.summary,
+        language:   state.language,
       }),
       signal: controller.signal,
     });
@@ -471,6 +484,7 @@ async function updateSummary(pageIndex) {
         content_id:      state.contentId,
         page_index:      pageIndex,
         current_summary: state.summary,
+        language:        state.language,
       }),
     });
     if (res.ok) {
