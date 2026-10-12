@@ -232,20 +232,33 @@ dropZone.addEventListener('drop', e => {
   if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
 });
 
+// Tracks an in-flight /upload or /upload-url call so switching language
+// mid-upload can cancel it and restart immediately instead of waiting for
+// the old language's extraction + overview generation to finish first.
+let activeUploadController = null;
+let pendingUpload = null; // { type: 'file', file } or { type: 'url', url }
+
 async function upload(file) {
+  pendingUpload = { type: 'file', file };
   dropZone.querySelector('.drop-label').textContent = 'Uploading…';
+  if (activeUploadController) activeUploadController.abort();
+  const controller = new AbortController();
+  activeUploadController = controller;
+
   const fd = new FormData();
   fd.append('file', file);
   fd.append('language', state.language);
   try {
-    const res = await fetch('/upload', { method: 'POST', body: fd });
+    const res = await fetch('/upload', { method: 'POST', body: fd, signal: controller.signal });
     if (!res.ok) {
       let msg = `Upload failed (${res.status})`;
       try { const err = await res.json(); msg = err.detail || msg; } catch {}
       throw new Error(msg);
     }
+    pendingUpload = null;
     initBook(await res.json());
   } catch (err) {
+    if (err.name === 'AbortError') return; // superseded by a language-switch retry
     dropZone.querySelector('.drop-label').textContent = `Error: ${err.message}`;
   }
 }
@@ -257,22 +270,29 @@ urlBtn.addEventListener('click', () => {
 urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') urlBtn.click(); });
 
 async function uploadUrl(url) {
+  pendingUpload = { type: 'url', url };
   dropZone.querySelector('.drop-label').textContent = 'Fetching page…';
   urlBtn.disabled = true;
+  if (activeUploadController) activeUploadController.abort();
+  const controller = new AbortController();
+  activeUploadController = controller;
   try {
     const res = await fetch('/upload-url', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ url, language: state.language }),
+      signal:  controller.signal,
     });
     if (!res.ok) {
       let msg = `Fetch failed (${res.status})`;
       try { const err = await res.json(); msg = err.detail || msg; } catch {}
       throw new Error(msg);
     }
+    pendingUpload = null;
     initBook(await res.json());
     urlInput.value = '';
   } catch (err) {
+    if (err.name === 'AbortError') return; // superseded by a language-switch retry
     dropZone.querySelector('.drop-label').textContent = `Error: ${err.message}`;
   } finally {
     urlBtn.disabled = false;
@@ -318,7 +338,16 @@ langBtns.forEach(btn => {
     langBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     state.language = btn.dataset.lang;
-    if (state.contentId) loadPage(state.currentIndex, true);
+
+    if (pendingUpload) {
+      // The upload/fetch is still extracting + generating the overview in
+      // the old language — cancel it and restart right away in the new one
+      // instead of waiting for that to finish first.
+      if (pendingUpload.type === 'file') upload(pendingUpload.file);
+      else uploadUrl(pendingUpload.url);
+    } else if (state.contentId) {
+      loadPage(state.currentIndex, true);
+    }
   });
 });
 
