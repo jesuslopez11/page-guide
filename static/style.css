@@ -217,6 +217,12 @@ main {
   transition: all 0.15s;
 }
 .re-explain:hover { color: var(--text); border-color: var(--accent); }
+.re-explain.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.re-explain.active:hover { color: #fff; }
 
 .top-bar-actions {
   display: flex;

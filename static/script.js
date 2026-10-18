@@ -14,6 +14,7 @@ const state = {
   streaming:     false,
   hasPageImages: false,
   documentUrl:   '',
+  autoPlay:      false,
 };
 
 // ── Audio / TTS ────────────────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ function highlightWord(panel, charIndex) {
   }
 }
 
-function speakText(btn, text) {
+function speakText(btn, text, onEnd) {
   if (btn.dataset.playing === '1') {
     if (speechSynthesis.paused) {
       speechSynthesis.resume();
@@ -122,6 +123,7 @@ function speakText(btn, text) {
     btn.dataset.playing = '';
     btn.textContent = btn.dataset.label;
     activeBtn = null;
+    if (onEnd) onEnd(false);
   };
 
   utterance.onerror = () => {
@@ -130,6 +132,7 @@ function speakText(btn, text) {
     btn.dataset.playing = '';
     btn.textContent = btn.dataset.label;
     activeBtn = null;
+    if (onEnd) onEnd(true);
   };
 
   activeBtn = btn;
@@ -141,7 +144,7 @@ function speakText(btn, text) {
 // Spanish read-aloud goes through the backend (ElevenLabs) instead of the
 // browser's local voices, since most machines don't have a Spanish voice
 // installed — English keeps using the free browser voices.
-async function speakViaElevenLabs(btn, text) {
+async function speakViaElevenLabs(btn, text, onEnd) {
   if (btn.dataset.playing === '1') {
     if (currentTTSAudio) {
       if (currentTTSAudio.paused) {
@@ -185,10 +188,11 @@ async function speakViaElevenLabs(btn, text) {
       activeBtn = null;
       currentTTSAudio = null;
     };
-    audio.onended = cleanup;
+    audio.onended = () => { cleanup(); if (onEnd) onEnd(false); };
     audio.onerror = () => {
       cleanup();
       showTTSError('The audio ElevenLabs returned could not be played.');
+      if (onEnd) onEnd(true);
     };
 
     activeBtn = btn;
@@ -201,11 +205,12 @@ async function speakViaElevenLabs(btn, text) {
     btn.dataset.playing = '';
     btn.textContent = btn.dataset.label;
     showTTSError(err.message || 'Could not play audio.');
+    if (onEnd) onEnd(true);
   }
 }
 
-function ttsPlay(btn, text) {
-  speakText(btn, text);
+function ttsPlay(btn, text, onEnd) {
+  speakText(btn, text, onEnd);
 }
 
 function addTTSBar(explanationText) {
@@ -267,6 +272,55 @@ function addTTSBar(explanationText) {
   bar.appendChild(btnPage);
   bar.appendChild(speedControl);
   output.appendChild(bar);
+
+  // Auto-play: every time a page's explanation finishes loading (fresh
+  // stream or cache hit both call addTTSBar), if auto-play is on, read it
+  // and chain to the next page when the speech naturally ends.
+  if (state.autoPlay) playWithAutoChain(btnExp, explanationText);
+}
+
+// Shared by both triggers — the automatic per-page kick-off in addTTSBar()
+// above, and the manual "start now" click in startAutoPlay() below — so
+// there's exactly one place that wires up the chain-to-next-page callback.
+function playWithAutoChain(btn, text) {
+  const pageAtStart = state.currentIndex;
+  ttsPlay(btn, text, errored => {
+    // Guard against a cancelled/stale utterance's end event firing after
+    // the user already stopped auto-play or navigated elsewhere by hand.
+    if (!state.autoPlay || state.currentIndex !== pageAtStart) return;
+    if (errored) { stopAutoPlay(); return; }
+    advanceAutoPlay();
+  });
+}
+
+function startAutoPlay() {
+  state.autoPlay = true;
+  autoPlayBtn.textContent = '⏹ Stop auto-play';
+  autoPlayBtn.classList.add('active');
+  // If this page's explanation is already loaded (TTS bar exists), start
+  // reading it right now instead of waiting for the next page to trigger
+  // addTTSBar's own auto-play check. If it's still streaming, addTTSBar
+  // will pick up state.autoPlay once it finishes — nothing more to do here.
+  const btnExp = document.querySelector('#tts-bar .tts-btn');
+  const explanationDiv = document.querySelector('.explanation');
+  if (btnExp && explanationDiv && btnExp.dataset.playing !== '1') {
+    playWithAutoChain(btnExp, explanationDiv.innerText);
+  }
+}
+
+function stopAutoPlay() {
+  state.autoPlay = false;
+  autoPlayBtn.textContent = '▶ Auto-play';
+  autoPlayBtn.classList.remove('active');
+  stopAudio();
+}
+
+function advanceAutoPlay() {
+  if (state.currentIndex >= state.pages.length - 1) {
+    stopAutoPlay(); // reached the end of the book
+    return;
+  }
+  goToPage(state.currentIndex + 1);
 }
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -283,6 +337,7 @@ const depthBtns      = document.querySelectorAll('.depth-btn');
 const langBtns       = document.querySelectorAll('.lang-btn');
 const reExplain      = $('re-explain');
 const openDocumentBtn = $('open-document');
+const autoPlayBtn    = $('auto-play-btn');
 const pageNav        = $('page-nav');
 const pageLabel      = $('page-label');
 const prevBtn        = $('prev-btn');
@@ -410,6 +465,8 @@ function initBook(data) {
   bottomNav.hidden   = false;
   reExplain.hidden   = false;
   openDocumentBtn.hidden = !state.documentUrl;
+  autoPlayBtn.hidden = false;
+  stopAutoPlay(); // reset auto-play state/button in case a previous book left it running
 
   dropZone.querySelector('.drop-label').textContent = 'Drop another file';
 
@@ -455,6 +512,10 @@ langBtns.forEach(btn => {
 reExplain.addEventListener('click', () => loadPage(state.currentIndex, true));
 openDocumentBtn.addEventListener('click', () => {
   if (state.documentUrl) window.open(state.documentUrl, '_blank', 'noopener');
+});
+autoPlayBtn.addEventListener('click', () => {
+  if (state.autoPlay) stopAutoPlay();
+  else startAutoPlay();
 });
 
 // ── Navigation ────────────────────────────────────────────────────────────────
@@ -605,6 +666,7 @@ async function loadPage(index, forceRefresh) {
     if (!res.ok) {
       const err = await res.json();
       output.innerHTML = `<div class="error-box">${err.detail || 'Something went wrong.'}</div>`;
+      if (state.autoPlay) advanceAutoPlay(); // don't silently stall on an unreadable page
       return;
     }
 
@@ -630,6 +692,7 @@ async function loadPage(index, forceRefresh) {
           const obj = JSON.parse(payload);
           if (obj.error) {
             div.innerHTML = `<div class="error-box">${obj.error}</div>`;
+            if (state.autoPlay) advanceAutoPlay();
             return;
           }
           accumulated += obj.text;
@@ -648,6 +711,7 @@ async function loadPage(index, forceRefresh) {
   } catch (err) {
     if (err.name === 'AbortError') return; // superseded by a newer page load
     output.innerHTML = `<div class="error-box">${err.message}</div>`;
+    if (state.autoPlay && isCurrent()) advanceAutoPlay();
   } finally {
     if (isCurrent()) state.streaming = false;
   }
