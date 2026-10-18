@@ -457,7 +457,6 @@ jumpBtn.addEventListener('click', () => {
 jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpBtn.click(); });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { document.getElementById('page-image-lightbox')?.remove(); return; }
   if (e.target.tagName === 'INPUT') return;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(state.currentIndex + 1);
   if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToPage(state.currentIndex - 1);
@@ -661,14 +660,147 @@ function pageImageHTML(index) {
   </div>`;
 }
 
+// Holds the cleanup for whichever lightbox is currently open, so Escape/close
+// button/backdrop-click all tear down the same window-level drag listeners
+// instead of just removing the DOM node and leaking them.
+let closeLightbox = null;
+
 function openPageImageLightbox(src) {
-  document.getElementById('page-image-lightbox')?.remove();
+  closeLightbox?.();
+
   const overlay = document.createElement('div');
   overlay.id = 'page-image-lightbox';
   overlay.className = 'page-image-lightbox';
-  overlay.innerHTML = `<img src="${src}" alt="Enlarged page" />`;
-  overlay.addEventListener('click', () => overlay.remove());
+
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = 'Enlarged page';
+  img.draggable = false;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'lightbox-close';
+  closeBtn.textContent = '✕';
+  closeBtn.setAttribute('aria-label', 'Close');
+
+  const zoomControls = document.createElement('div');
+  zoomControls.className = 'lightbox-zoom-controls';
+  const zoomOutBtn = document.createElement('button');
+  zoomOutBtn.textContent = '−';
+  zoomOutBtn.setAttribute('aria-label', 'Zoom out');
+  const zoomLabel = document.createElement('span');
+  zoomLabel.className = 'lightbox-zoom-label';
+  const zoomInBtn = document.createElement('button');
+  zoomInBtn.textContent = '+';
+  zoomInBtn.setAttribute('aria-label', 'Zoom in');
+  zoomControls.append(zoomOutBtn, zoomLabel, zoomInBtn);
+
+  overlay.append(img, closeBtn, zoomControls);
   document.body.appendChild(overlay);
+
+  const MIN_SCALE = 1, MAX_SCALE = 5, DBLCLICK_SCALE = 2.5;
+  let scale = MIN_SCALE, originX = 0, originY = 0;
+  let panning = false, panStartX = 0, panStartY = 0, originAtPanStartX = 0, originAtPanStartY = 0;
+  let pinchStartDist = 0, pinchStartScale = 1;
+
+  function clampOrigin() {
+    // Keep the pan within the scaled image's bounds so it can't be dragged
+    // fully off-screen with no way back.
+    const maxX = (img.clientWidth  * (scale - 1)) / 2;
+    const maxY = (img.clientHeight * (scale - 1)) / 2;
+    originX = Math.min(maxX, Math.max(-maxX, originX));
+    originY = Math.min(maxY, Math.max(-maxY, originY));
+  }
+
+  function render() {
+    clampOrigin();
+    img.style.transform = `translate(${originX}px, ${originY}px) scale(${scale})`;
+    img.style.cursor = scale > MIN_SCALE ? 'grab' : 'zoom-in';
+    zoomLabel.textContent = `${Math.round(scale * 100)}%`;
+    zoomOutBtn.disabled = scale <= MIN_SCALE;
+    zoomInBtn.disabled = scale >= MAX_SCALE;
+  }
+
+  function setScale(next) {
+    scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
+    if (scale === MIN_SCALE) { originX = 0; originY = 0; }
+    render();
+  }
+
+  zoomInBtn.onclick  = e => { e.stopPropagation(); setScale(scale + 0.5); };
+  zoomOutBtn.onclick = e => { e.stopPropagation(); setScale(scale - 0.5); };
+
+  img.addEventListener('wheel', e => {
+    e.preventDefault();
+    setScale(scale + (e.deltaY < 0 ? 0.25 : -0.25));
+  }, { passive: false });
+
+  img.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    setScale(scale > MIN_SCALE ? MIN_SCALE : DBLCLICK_SCALE);
+  });
+
+  img.addEventListener('mousedown', e => {
+    if (scale <= MIN_SCALE) return;
+    e.preventDefault();
+    panning = true;
+    panStartX = e.clientX; panStartY = e.clientY;
+    originAtPanStartX = originX; originAtPanStartY = originY;
+    img.style.cursor = 'grabbing';
+  });
+  const onMouseMove = e => {
+    if (!panning) return;
+    originX = originAtPanStartX + (e.clientX - panStartX);
+    originY = originAtPanStartY + (e.clientY - panStartY);
+    render();
+  };
+  const onMouseUp = () => { panning = false; render(); };
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+
+  function touchDist(touches) {
+    const [a, b] = touches;
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+  img.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      pinchStartDist = touchDist(e.touches);
+      pinchStartScale = scale;
+    } else if (e.touches.length === 1 && scale > MIN_SCALE) {
+      panning = true;
+      panStartX = e.touches[0].clientX; panStartY = e.touches[0].clientY;
+      originAtPanStartX = originX; originAtPanStartY = originY;
+    }
+  }, { passive: true });
+  img.addEventListener('touchmove', e => {
+    if (e.touches.length === 2 && pinchStartDist) {
+      e.preventDefault();
+      setScale(pinchStartScale * (touchDist(e.touches) / pinchStartDist));
+    } else if (e.touches.length === 1 && panning) {
+      e.preventDefault();
+      originX = originAtPanStartX + (e.touches[0].clientX - panStartX);
+      originY = originAtPanStartY + (e.touches[0].clientY - panStartY);
+      render();
+    }
+  }, { passive: false });
+  img.addEventListener('touchend', () => { panning = false; pinchStartDist = 0; render(); });
+
+  const onKeydown = e => { if (e.key === 'Escape') closeLightbox?.(); };
+  document.addEventListener('keydown', onKeydown);
+
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) closeLightbox?.();
+  });
+  closeBtn.addEventListener('click', () => closeLightbox?.());
+
+  closeLightbox = () => {
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+    document.removeEventListener('keydown', onKeydown);
+    overlay.remove();
+    closeLightbox = null;
+  };
+
+  render();
 }
 
 function overviewHTML() {
