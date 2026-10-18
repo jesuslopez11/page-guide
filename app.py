@@ -5,7 +5,7 @@ import tempfile
 import asyncio
 
 import anthropic
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +32,10 @@ async def no_cache_frontend(request, call_next):
 
 
 client = anthropic.Anthropic()
+# Async client used specifically for /explain's long-lived streaming call, so
+# it can be cancelled the moment the client disconnects instead of running to
+# completion regardless — see the disconnect check inside generate() below.
+async_client = anthropic.AsyncAnthropic()
 content_store: dict = {}
 
 
@@ -526,7 +530,7 @@ class SummarizeRequest(BaseModel):
 
 
 @app.post("/explain")
-async def explain(req: ExplainRequest):
+async def explain(req: ExplainRequest, request: Request):
     if req.content_id not in content_store:
         raise HTTPException(404, "Content not found. Please re-upload your file.")
 
@@ -588,16 +592,23 @@ async def explain(req: ExplainRequest):
     else:
         message_content = user_msg
 
-    def generate():
+    async def generate():
         try:
-            with client.messages.stream(
+            async with async_client.messages.stream(
                 model=model,
                 max_tokens=4000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": message_content}],
                 timeout=120.0,
             ) as stream:
-                for text in stream.text_stream:
+                async for text in stream.text_stream:
+                    # Stop burning Claude API time and server resources the
+                    # moment the client gives up (navigated away, closed the
+                    # tab) instead of running the full generation regardless —
+                    # this is what was piling up under rapid navigation and
+                    # starving out new requests on a resource-limited instance.
+                    if await request.is_disconnected():
+                        break
                     yield f"data: {json.dumps({'text': text})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
