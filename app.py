@@ -793,10 +793,17 @@ async def get_page_image(content_id: str, page_index: int):
 
     pdf_bytes = store.get("pdf_bytes")
     if pdf_bytes:
-        try:
-            image_bytes = await asyncio.to_thread(render_pdf_page_image, pdf_bytes, page["page_num"])
-        except Exception as e:
-            raise HTTPException(500, f"Could not render page image: {e}")
+        # Rendering a PDF page is CPU-heavy; cache it per content so flipping
+        # back and forth between pages (or opening the same page twice)
+        # doesn't re-render it from scratch every single time.
+        image_cache = store.setdefault("rendered_image_cache", {})
+        image_bytes = image_cache.get(page_index)
+        if image_bytes is None:
+            try:
+                image_bytes = await asyncio.to_thread(render_pdf_page_image, pdf_bytes, page["page_num"])
+            except Exception as e:
+                raise HTTPException(500, f"Could not render page image: {e}")
+            image_cache[page_index] = image_bytes
         return Response(content=image_bytes, media_type="image/jpeg")
 
     raise HTTPException(404, "This page has no image.")
