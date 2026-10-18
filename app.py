@@ -269,6 +269,50 @@ def generate_book_overview(pages: list[dict], language: str = "english") -> str:
     return msg.content[0].text.strip()
 
 
+def classify_front_matter(pages: list[dict]) -> set[int]:
+    """Identify leading pages that are pure legal/publisher boilerplate
+    (copyright notice, ISBN, printing history, publisher imprint) — scoped
+    to only the first handful of pages, where front matter actually lives,
+    to limit how much a misclassification could affect. Returns a set of
+    page `index` values; callers mark those "skip" but keep them in the
+    page list so they're still reachable via Jump to Page."""
+    candidates = [p for p in pages[:15] if not p.get("image_data")]
+    if not candidates:
+        return set()
+
+    numbered = "\n\n---\n\n".join(
+        f'Page {p["index"]}:\n{p["text"][:800]}' for p in candidates
+    )
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Here are the first few pages of a book:\n\n{numbered}\n\n"
+                    "Which of these pages are PURELY legal/publisher boilerplate — "
+                    "things like a copyright notice, ISBN, 'all rights reserved,' "
+                    "printing/edition history, or publisher imprint information? "
+                    "Do NOT include a title page with just the book/author name, a "
+                    "dedication, a table of contents, or anything with real written "
+                    "content — personal introductions, forewords, author's notes, "
+                    "and prologues all count as real content and must NOT be listed, "
+                    "even if they mention the publisher in passing.\n\n"
+                    "Reply with ONLY a comma-separated list of the page numbers to "
+                    "skip (using the numbers above), or 'none' if none qualify. "
+                    "No explanation, nothing else."
+                ),
+            }],
+        )
+        reply = msg.content[0].text.strip().lower()
+        if reply == "none":
+            return set()
+        return {int(n.strip()) for n in reply.split(",") if n.strip().isdigit()}
+    except Exception:
+        return set()
+
+
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
 PROMPTS = {
@@ -352,10 +396,22 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
     if not pages:
         raise HTTPException(400, "No readable content found.")
 
+    is_comic = suffix in {".cbr", ".cbz"}
+
     try:
         overview = await asyncio.to_thread(generate_book_overview, pages, language)
     except Exception:
         overview = ""
+
+    if is_comic:
+        skip_indices = set()
+    else:
+        try:
+            skip_indices = await asyncio.to_thread(classify_front_matter, pages)
+        except Exception:
+            skip_indices = set()
+    for p in pages:
+        p["skip"] = p["index"] in skip_indices
 
     content_id = str(uuid.uuid4())
     content_store[content_id] = {
@@ -365,7 +421,6 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         "pdf_bytes": raw if suffix == ".pdf" else None,
     }
 
-    is_comic = suffix in {".cbr", ".cbz"}
     has_page_images = is_comic or suffix == ".pdf"
     return {
         "content_id": content_id,
@@ -376,7 +431,7 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         "is_comic": is_comic,
         "has_page_images": has_page_images,
         "pages": [
-            {"index": p["index"], "title": p["title"], "page_num": p["page_num"]}
+            {"index": p["index"], "title": p["title"], "page_num": p["page_num"], "skip": p["skip"]}
             for p in pages
         ],
     }
@@ -414,6 +469,13 @@ async def upload_url(req: UrlUploadRequest):
     except Exception:
         overview = ""
 
+    try:
+        skip_indices = await asyncio.to_thread(classify_front_matter, pages)
+    except Exception:
+        skip_indices = set()
+    for p in pages:
+        p["skip"] = p["index"] in skip_indices
+
     content_id = str(uuid.uuid4())
     content_store[content_id] = {
         "title": title,
@@ -431,7 +493,7 @@ async def upload_url(req: UrlUploadRequest):
         "is_comic": False,
         "has_page_images": content["has_page_images"],
         "pages": [
-            {"index": p["index"], "title": p["title"], "page_num": p["page_num"]}
+            {"index": p["index"], "title": p["title"], "page_num": p["page_num"], "skip": p["skip"]}
             for p in pages
         ],
     }

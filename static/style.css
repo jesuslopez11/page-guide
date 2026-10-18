@@ -132,6 +132,34 @@ body {
   font-weight: 600;
 }
 
+.skipped-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.skipped-pages-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 0 10px 4px;
+}
+.skipped-page-item {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--muted);
+  font-style: italic;
+  opacity: 0.75;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+}
+.skipped-page-item:hover { background: var(--surface); color: var(--text); opacity: 1; }
+
 /* ── Main ─────────────────────────────────────────────────────────────────── */
 
 main {

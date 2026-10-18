@@ -277,6 +277,7 @@ const bookStats      = $('book-stats');
 const jumpInput      = $('jump-input');
 const jumpBtn        = $('jump-btn');
 const nearbyPages    = $('nearby-pages');
+const skippedPages   = $('skipped-pages');
 const depthBtns      = document.querySelectorAll('.depth-btn');
 const langBtns       = document.querySelectorAll('.lang-btn');
 const reExplain      = $('re-explain');
@@ -408,7 +409,15 @@ function initBook(data) {
 
   dropZone.querySelector('.drop-label').textContent = 'Drop another file';
 
-  goToPage(0);
+  updateSkippedPages();
+
+  // Open on the first page that isn't flagged as front-matter boilerplate,
+  // rather than always page 0 (a copyright page, say).
+  let startIndex = 0;
+  while (startIndex < state.pages.length - 1 && state.pages[startIndex].skip) {
+    startIndex++;
+  }
+  goToPage(startIndex);
 }
 
 // ── Depth selector ────────────────────────────────────────────────────────────
@@ -442,10 +451,10 @@ langBtns.forEach(btn => {
 reExplain.addEventListener('click', () => loadPage(state.currentIndex, true));
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-prevBtn.addEventListener('click',    () => goToPage(state.currentIndex - 1));
-nextBtn.addEventListener('click',    () => goToPage(state.currentIndex + 1));
-prevBottom.addEventListener('click', () => goToPage(state.currentIndex - 1));
-nextBottom.addEventListener('click', () => goToPage(state.currentIndex + 1));
+prevBtn.addEventListener('click',    () => goToAdjacentPage(-1));
+nextBtn.addEventListener('click',    () => goToAdjacentPage(1));
+prevBottom.addEventListener('click', () => goToAdjacentPage(-1));
+nextBottom.addEventListener('click', () => goToAdjacentPage(1));
 
 jumpBtn.addEventListener('click', () => {
   const target = parseInt(jumpInput.value);
@@ -458,8 +467,8 @@ jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpBtn.clic
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(state.currentIndex + 1);
-  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToPage(state.currentIndex - 1);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToAdjacentPage(1);
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToAdjacentPage(-1);
 });
 
 function goToPage(index) {
@@ -481,6 +490,18 @@ function goToPage(index) {
   updateNav();
   updateNearbyPages();
   loadPage(index, false);
+}
+
+// Next/Prev and arrow-key navigation skip over pages flagged as front-matter
+// boilerplate (copyright notice, ISBN, etc.) — but they stay in state.pages
+// and goToPage() itself is never filtered, so Jump to Page and the sidebar
+// can still reach them directly to double-check the call was right.
+function goToAdjacentPage(delta) {
+  let index = state.currentIndex + delta;
+  while (index >= 0 && index < state.pages.length && state.pages[index].skip) {
+    index += delta;
+  }
+  goToPage(index);
 }
 
 function updateNav() {
@@ -510,6 +531,33 @@ function updateNearbyPages() {
     el.addEventListener('click', () => { goToPage(j); closeSidebar(); });
     nearbyPages.appendChild(el);
   }
+}
+
+// Front-matter pages (copyright notice, ISBN, etc.) are skipped by Next/Prev,
+// but listed here so they're easy to jump to and double-check by hand.
+function updateSkippedPages() {
+  const skipped = state.pages.filter(p => p.skip);
+  if (!skipped.length) {
+    skippedPages.hidden = true;
+    skippedPages.innerHTML = '';
+    return;
+  }
+
+  skippedPages.hidden = false;
+  skippedPages.innerHTML = '';
+
+  const label = document.createElement('div');
+  label.className = 'skipped-pages-label';
+  label.textContent = 'Skipped (front matter)';
+  skippedPages.appendChild(label);
+
+  skipped.forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'skipped-page-item';
+    el.textContent = p.title;
+    el.addEventListener('click', () => { goToPage(p.index); closeSidebar(); });
+    skippedPages.appendChild(el);
+  });
 }
 
 // ── Explanation ───────────────────────────────────────────────────────────────
