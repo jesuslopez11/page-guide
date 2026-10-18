@@ -204,7 +204,7 @@ async function speakViaElevenLabs(btn, text) {
 }
 
 function ttsPlay(btn, text) {
-  speakViaElevenLabs(btn, text);
+  speakText(btn, text);
 }
 
 function addTTSBar(explanationText) {
