@@ -458,10 +458,10 @@ openDocumentBtn.addEventListener('click', () => {
 });
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-prevBtn.addEventListener('click',    () => goToAdjacentPage(-1));
-nextBtn.addEventListener('click',    () => goToAdjacentPage(1));
-prevBottom.addEventListener('click', () => goToAdjacentPage(-1));
-nextBottom.addEventListener('click', () => goToAdjacentPage(1));
+prevBtn.addEventListener('click',    () => goToPage(state.currentIndex - 1));
+nextBtn.addEventListener('click',    () => goToPage(state.currentIndex + 1));
+prevBottom.addEventListener('click', () => goToPage(state.currentIndex - 1));
+nextBottom.addEventListener('click', () => goToPage(state.currentIndex + 1));
 
 jumpBtn.addEventListener('click', () => {
   const target = parseInt(jumpInput.value);
@@ -474,8 +474,8 @@ jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpBtn.clic
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToAdjacentPage(1);
-  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToAdjacentPage(-1);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(state.currentIndex + 1);
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToPage(state.currentIndex - 1);
 });
 
 function goToPage(index) {
@@ -497,18 +497,6 @@ function goToPage(index) {
   updateNav();
   updateNearbyPages();
   loadPage(index, false);
-}
-
-// Next/Prev and arrow-key navigation skip over pages flagged as front-matter
-// boilerplate (copyright notice, ISBN, etc.) — but they stay in state.pages
-// and goToPage() itself is never filtered, so Jump to Page and the sidebar
-// can still reach them directly to double-check the call was right.
-function goToAdjacentPage(delta) {
-  let index = state.currentIndex + delta;
-  while (index >= 0 && index < state.pages.length && state.pages[index].skip) {
-    index += delta;
-  }
-  goToPage(index);
 }
 
 function updateNav() {
