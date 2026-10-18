@@ -188,8 +188,7 @@ async function speakViaElevenLabs(btn, text) {
 }
 
 function ttsPlay(btn, text) {
-  if (state.language === 'spanish') speakViaElevenLabs(btn, text);
-  else speakText(btn, text);
+  speakViaElevenLabs(btn, text);
 }
 
 function addTTSBar(explanationText) {
