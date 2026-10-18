@@ -270,12 +270,13 @@ def generate_book_overview(pages: list[dict], language: str = "english") -> str:
 
 
 def classify_front_matter(pages: list[dict]) -> set[int]:
-    """Identify leading pages that are pure legal/publisher boilerplate
-    (copyright notice, ISBN, printing history, publisher imprint) — scoped
-    to only the first handful of pages, where front matter actually lives,
-    to limit how much a misclassification could affect. Returns a set of
-    page `index` values; callers mark those "skip" but keep them in the
-    page list so they're still reachable via Jump to Page."""
+    """Identify leading pages that are publisher/reference front matter with
+    no real content to explain — copyright notices, ISBN/printing info, and
+    "also by this author" / other-books-in-series listings — scoped to only
+    the first handful of pages, where front matter actually lives, to limit
+    how much a misclassification could affect. Returns a set of page
+    `index` values; callers mark those "skip" but keep them in the page
+    list so they're still reachable via Jump to Page."""
     candidates = [p for p in pages[:15] if not p.get("image_data")]
     if not candidates:
         return set()
@@ -291,9 +292,12 @@ def classify_front_matter(pages: list[dict]) -> set[int]:
                 "role": "user",
                 "content": (
                     f"Here are the first few pages of a book:\n\n{numbered}\n\n"
-                    "Which of these pages are PURELY legal/publisher boilerplate — "
-                    "things like a copyright notice, ISBN, 'all rights reserved,' "
-                    "printing/edition history, or publisher imprint information? "
+                    "Which of these pages are pure publisher/reference front matter, "
+                    "with nothing a reader would actually want explained? That "
+                    "includes: a copyright notice, ISBN, 'all rights reserved,' "
+                    "printing/edition history, publisher imprint information, and "
+                    "a list of the author's other books or other books in the "
+                    "series ('Also by...', 'Books by this author', etc.).\n\n"
                     "Do NOT include a title page with just the book/author name, a "
                     "dedication, a table of contents, or anything with real written "
                     "content — personal introductions, forewords, author's notes, "
