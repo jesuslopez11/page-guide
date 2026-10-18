@@ -292,6 +292,13 @@ main {
   display: flex;
   gap: 10px;
 }
+.tts-error {
+  max-width: 720px;
+  margin: 8px auto 0;
+  color: var(--danger);
+  font-size: 12px;
+  text-align: center;
+}
 .tts-btn {
   flex: 1;
   padding: 10px 14px;

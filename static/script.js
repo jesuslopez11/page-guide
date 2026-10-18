@@ -48,6 +48,18 @@ function stopAudio() {
   });
   const panel = document.getElementById('reading-panel');
   if (panel) panel.remove();
+  document.getElementById('tts-error')?.remove();
+}
+
+function showTTSError(msg) {
+  document.getElementById('tts-error')?.remove();
+  const bar = document.getElementById('tts-bar');
+  if (!bar) return;
+  const el = document.createElement('div');
+  el.id = 'tts-error';
+  el.className = 'tts-error';
+  el.textContent = `⚠️ ${msg}`;
+  bar.parentNode.insertBefore(el, bar.nextSibling);
 }
 
 function showReadingPanel(text) {
@@ -173,7 +185,10 @@ async function speakViaElevenLabs(btn, text) {
       currentTTSAudio = null;
     };
     audio.onended = cleanup;
-    audio.onerror = cleanup;
+    audio.onerror = () => {
+      cleanup();
+      showTTSError('The audio ElevenLabs returned could not be played.');
+    };
 
     activeBtn = btn;
     btn.dataset.playing = '1';
@@ -184,6 +199,7 @@ async function speakViaElevenLabs(btn, text) {
     btn.disabled = false;
     btn.dataset.playing = '';
     btn.textContent = btn.dataset.label;
+    showTTSError(err.message || 'Could not play audio.');
   }
 }
 
