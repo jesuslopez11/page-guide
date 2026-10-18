@@ -13,6 +13,7 @@ const state = {
   nextTeaser:    '',   // first few words of the next page
   streaming:     false,
   hasPageImages: false,
+  documentUrl:   '',
 };
 
 // ── Audio / TTS ────────────────────────────────────────────────────────────────
@@ -281,6 +282,7 @@ const skippedPages   = $('skipped-pages');
 const depthBtns      = document.querySelectorAll('.depth-btn');
 const langBtns       = document.querySelectorAll('.lang-btn');
 const reExplain      = $('re-explain');
+const openDocumentBtn = $('open-document');
 const pageNav        = $('page-nav');
 const pageLabel      = $('page-label');
 const prevBtn        = $('prev-btn');
@@ -397,6 +399,7 @@ function initBook(data) {
   state.summaryCache = {};
   state.summary      = '';
   state.hasPageImages = data.has_page_images || data.is_comic || false;
+  state.documentUrl   = data.document_url || '';
 
   bookTitle.textContent = data.title;
   bookStats.textContent = `${data.total_pages} readable pages`;
@@ -406,6 +409,7 @@ function initBook(data) {
   pageNav.hidden     = false;
   bottomNav.hidden   = false;
   reExplain.hidden   = false;
+  openDocumentBtn.hidden = !state.documentUrl;
 
   dropZone.querySelector('.drop-label').textContent = 'Drop another file';
 
@@ -449,6 +453,9 @@ langBtns.forEach(btn => {
 });
 
 reExplain.addEventListener('click', () => loadPage(state.currentIndex, true));
+openDocumentBtn.addEventListener('click', () => {
+  if (state.documentUrl) window.open(state.documentUrl, '_blank', 'noopener');
+});
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 prevBtn.addEventListener('click',    () => goToAdjacentPage(-1));

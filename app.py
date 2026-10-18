@@ -397,7 +397,6 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
     else:
         text = raw.decode("utf-8", errors="ignore")
         pages = await asyncio.to_thread(extract_text_pages, text)
-
     if not pages:
         raise HTTPException(400, "No readable content found.")
 
@@ -424,6 +423,8 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         "pages": pages,
         "overview": overview,
         "pdf_bytes": raw if suffix == ".pdf" else None,
+        "raw_text": raw.decode("utf-8", errors="ignore") if suffix in {".txt", ".md"} else None,
+        "original_url": None,
     }
 
     has_page_images = is_comic or suffix == ".pdf"
@@ -435,6 +436,7 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         "last_page_num": pages[-1]["page_num"],
         "is_comic": is_comic,
         "has_page_images": has_page_images,
+        "document_url": f"/document?content_id={content_id}",
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"], "skip": p["skip"]}
             for p in pages
@@ -487,8 +489,11 @@ async def upload_url(req: UrlUploadRequest):
         "pages": pages,
         "overview": overview,
         "pdf_bytes": content["pdf_bytes"],
+        "raw_text": None,
+        "original_url": url,
     }
 
+    is_pdf_link = content["pdf_bytes"] is not None
     return {
         "content_id": content_id,
         "title": title,
@@ -497,6 +502,7 @@ async def upload_url(req: UrlUploadRequest):
         "last_page_num": pages[-1]["page_num"],
         "is_comic": False,
         "has_page_images": content["has_page_images"],
+        "document_url": f"/document?content_id={content_id}" if is_pdf_link else url,
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"], "skip": p["skip"]}
             for p in pages
@@ -727,6 +733,46 @@ async def text_to_speech(req: TTSRequest):
         raise HTTPException(502, f"ElevenLabs error: {e}")
 
     return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+@app.get("/document")
+async def get_document(content_id: str):
+    import re
+    from fastapi.responses import Response, PlainTextResponse, HTMLResponse
+
+    store = content_store.get(content_id)
+    if not store:
+        raise HTTPException(404, "Content not found.")
+
+    safe_title = re.sub(r'[^\w\-. ]', '_', store.get("title") or "document") or "document"
+
+    if store.get("pdf_bytes"):
+        filename = safe_title if safe_title.lower().endswith(".pdf") else f"{safe_title}.pdf"
+        return Response(
+            content=store["pdf_bytes"],
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+
+    if store.get("raw_text") is not None:
+        return PlainTextResponse(store["raw_text"])
+
+    pages = store["pages"]
+    if pages and pages[0].get("image_data"):
+        imgs = "".join(
+            f'<img src="/page-image?content_id={content_id}&page_index={p["index"]}" '
+            f'style="display:block;width:100%;max-width:900px;margin:0 auto;" />'
+            for p in pages
+        )
+        html = (
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+            f"<title>{safe_title}</title>"
+            "<style>body{background:#111;margin:0;padding:0;}</style></head>"
+            f"<body>{imgs}</body></html>"
+        )
+        return HTMLResponse(html)
+
+    raise HTTPException(404, "No full document available for this content.")
 
 
 @app.get("/page-image")

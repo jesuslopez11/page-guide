@@ -218,6 +218,13 @@ main {
 }
 .re-explain:hover { color: var(--text); border-color: var(--accent); }
 
+.top-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .page-nav {
   display: flex;
   align-items: center;
