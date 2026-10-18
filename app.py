@@ -309,10 +309,11 @@ def classify_front_matter(pages: list[dict]) -> set[int]:
                 ),
             }],
         )
-        reply = msg.content[0].text.strip().lower()
-        if reply == "none":
-            return set()
-        return {int(n.strip()) for n in reply.split(",") if n.strip().isdigit()}
+        reply = msg.content[0].text.strip()
+        import re
+        found = {int(n) for n in re.findall(r"\d+", reply)}
+        valid_indices = {p["index"] for p in candidates}
+        return found & valid_indices
     except Exception:
         return set()
 
