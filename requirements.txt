@@ -6,3 +6,4 @@ python-multipart
 requests
 Pillow
 beautifulsoup4
+psycopg2-binary

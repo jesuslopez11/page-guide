@@ -472,11 +472,18 @@ function initBook(data) {
 
   updateSkippedPages();
 
-  // Open on the first page that isn't flagged as front-matter boilerplate,
-  // rather than always page 0 (a copyright page, say).
-  let startIndex = 0;
-  while (startIndex < state.pages.length - 1 && state.pages[startIndex].skip) {
-    startIndex++;
+  // If this book has a remembered page (from any device — matched by the
+  // file's own content, not a login), resume there. Otherwise open on the
+  // first page that isn't flagged as front-matter boilerplate, rather than
+  // always page 0 (a copyright page, say).
+  let startIndex;
+  if (typeof data.resume_index === 'number' && data.resume_index >= 0 && data.resume_index < state.pages.length) {
+    startIndex = data.resume_index;
+  } else {
+    startIndex = 0;
+    while (startIndex < state.pages.length - 1 && state.pages[startIndex].skip) {
+      startIndex++;
+    }
   }
   goToPage(startIndex);
 }
@@ -558,6 +565,19 @@ function goToPage(index) {
   updateNav();
   updateNearbyPages();
   loadPage(index, false);
+  saveProgress(index);
+}
+
+// Remembers the current page so it can be resumed from any device. Fire-
+// and-forget — failures are silently ignored, since this is a nice-to-have
+// and should never interrupt reading.
+function saveProgress(index) {
+  if (!state.contentId) return;
+  fetch('/progress', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ content_id: state.contentId, page_index: index }),
+  }).catch(() => {});
 }
 
 function updateNav() {

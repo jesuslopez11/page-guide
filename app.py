@@ -3,6 +3,7 @@ import json
 import uuid
 import tempfile
 import asyncio
+import hashlib
 
 import anthropic
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
@@ -37,6 +38,83 @@ client = anthropic.Anthropic()
 # completion regardless — see the disconnect check inside generate() below.
 async_client = anthropic.AsyncAnthropic()
 content_store: dict = {}
+
+
+# ── Reading progress (cross-device "resume where I left off") ──────────────────
+# Identifies a book by a hash of its own content (file bytes, or the URL for a
+# web link), not by any user account — there's no login system here. Entirely
+# optional: if DATABASE_URL isn't set, or the database is briefly unreachable,
+# every function here just no-ops so the app still works fully, just without
+# remembering position.
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+def get_db_connection():
+    if not DATABASE_URL:
+        return None
+    import psycopg2
+    return psycopg2.connect(DATABASE_URL)
+
+
+def ensure_progress_table():
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS reading_progress (
+                    content_hash TEXT PRIMARY KEY,
+                    title TEXT,
+                    page_index INTEGER NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+ensure_progress_table()
+
+
+def get_saved_progress(content_hash: str):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT page_index FROM reading_progress WHERE content_hash = %s",
+                (content_hash,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def save_progress(content_hash: str, title: str, page_index: int) -> bool:
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO reading_progress (content_hash, title, page_index, updated_at)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (content_hash) DO UPDATE
+                SET page_index = EXCLUDED.page_index, updated_at = now(), title = EXCLUDED.title
+            """, (content_hash, title, page_index))
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
 
 
 # ── Extraction ────────────────────────────────────────────────────────────────
@@ -422,6 +500,8 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         p["skip"] = p["index"] in skip_indices
 
     content_id = str(uuid.uuid4())
+    content_hash = hashlib.sha256(raw).hexdigest()
+    resume_index = await asyncio.to_thread(get_saved_progress, content_hash)
     content_store[content_id] = {
         "title": file.filename,
         "pages": pages,
@@ -429,6 +509,7 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         "pdf_bytes": raw if suffix == ".pdf" else None,
         "raw_text": raw.decode("utf-8", errors="ignore") if suffix in {".txt", ".md"} else None,
         "original_url": None,
+        "content_hash": content_hash,
     }
 
     has_page_images = is_comic or suffix == ".pdf"
@@ -441,6 +522,7 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         "is_comic": is_comic,
         "has_page_images": has_page_images,
         "document_url": f"/document?content_id={content_id}",
+        "resume_index": resume_index,
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"], "skip": p["skip"]}
             for p in pages
@@ -488,6 +570,11 @@ async def upload_url(req: UrlUploadRequest):
         p["skip"] = p["index"] in skip_indices
 
     content_id = str(uuid.uuid4())
+    is_pdf_link = content["pdf_bytes"] is not None
+    content_hash = hashlib.sha256(
+        content["pdf_bytes"] if is_pdf_link else url.encode()
+    ).hexdigest()
+    resume_index = await asyncio.to_thread(get_saved_progress, content_hash)
     content_store[content_id] = {
         "title": title,
         "pages": pages,
@@ -495,9 +582,9 @@ async def upload_url(req: UrlUploadRequest):
         "pdf_bytes": content["pdf_bytes"],
         "raw_text": None,
         "original_url": url,
+        "content_hash": content_hash,
     }
 
-    is_pdf_link = content["pdf_bytes"] is not None
     return {
         "content_id": content_id,
         "title": title,
@@ -507,6 +594,7 @@ async def upload_url(req: UrlUploadRequest):
         "is_comic": False,
         "has_page_images": content["has_page_images"],
         "document_url": f"/document?content_id={content_id}" if is_pdf_link else url,
+        "resume_index": resume_index,
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"], "skip": p["skip"]}
             for p in pages
@@ -829,6 +917,24 @@ async def get_page_text(content_id: str, page_index: int):
     if page_index < 0 or page_index >= len(pages):
         raise HTTPException(400, "Invalid page index.")
     return {"text": pages[page_index]}
+
+
+class ProgressRequest(BaseModel):
+    content_id: str
+    page_index: int
+
+
+@app.post("/progress")
+async def save_reading_progress(req: ProgressRequest):
+    """Remember the current page for this book so it can be resumed on any
+    device. Best-effort — silently does nothing if there's no database
+    configured or it's briefly unreachable, since this is a nice-to-have,
+    not something that should ever block reading."""
+    store = content_store.get(req.content_id)
+    if not store or not store.get("content_hash"):
+        return {"saved": False}
+    saved = await asyncio.to_thread(save_progress, store["content_hash"], store.get("title") or "", req.page_index)
+    return {"saved": saved}
 
 
 @app.get("/health")
