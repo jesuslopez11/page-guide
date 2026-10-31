@@ -526,24 +526,28 @@ autoPlayBtn.addEventListener('click', () => {
 });
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-prevBtn.addEventListener('click',    () => goToPage(state.currentIndex - 1));
-nextBtn.addEventListener('click',    () => goToPage(state.currentIndex + 1));
-prevBottom.addEventListener('click', () => goToPage(state.currentIndex - 1));
-nextBottom.addEventListener('click', () => goToPage(state.currentIndex + 1));
+// Any manual navigation hands control back from auto-play — otherwise going
+// Prev while auto-play is still running (nothing ever turned it off) loads
+// the earlier page, reads it aloud since auto-play is still on, then
+// auto-advances forward again the moment that finishes, undoing the Prev.
+prevBtn.addEventListener('click',    () => { stopAutoPlay(); goToPage(state.currentIndex - 1); });
+nextBtn.addEventListener('click',    () => { stopAutoPlay(); goToPage(state.currentIndex + 1); });
+prevBottom.addEventListener('click', () => { stopAutoPlay(); goToPage(state.currentIndex - 1); });
+nextBottom.addEventListener('click', () => { stopAutoPlay(); goToPage(state.currentIndex + 1); });
 
 jumpBtn.addEventListener('click', () => {
   const target = parseInt(jumpInput.value);
   if (isNaN(target)) return;
   // Find the first readable page at or after the requested page number
   const found = state.pages.findIndex(p => p.page_num >= target);
-  if (found !== -1) goToPage(found);
+  if (found !== -1) { stopAutoPlay(); goToPage(found); }
 });
 jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpBtn.click(); });
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(state.currentIndex + 1);
-  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToPage(state.currentIndex - 1);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { stopAutoPlay(); goToPage(state.currentIndex + 1); }
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   { stopAutoPlay(); goToPage(state.currentIndex - 1); }
 });
 
 function goToPage(index) {
@@ -604,7 +608,7 @@ function updateNearbyPages() {
     const el = document.createElement('div');
     el.className = 'page-item' + (j === i ? ' active' : '');
     el.textContent = p.title;
-    el.addEventListener('click', () => { goToPage(j); closeSidebar(); });
+    el.addEventListener('click', () => { stopAutoPlay(); goToPage(j); closeSidebar(); });
     nearbyPages.appendChild(el);
   }
 }
@@ -631,7 +635,7 @@ function updateSkippedPages() {
     const el = document.createElement('div');
     el.className = 'skipped-page-item';
     el.textContent = p.title;
-    el.addEventListener('click', () => { goToPage(p.index); closeSidebar(); });
+    el.addEventListener('click', () => { stopAutoPlay(); goToPage(p.index); closeSidebar(); });
     skippedPages.appendChild(el);
   });
 }
