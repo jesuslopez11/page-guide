@@ -10,6 +10,8 @@ const state = {
   cache:         {},   // `${index}-${mode}-${language}` => markdown string
   summaryCache:  {},   // pageIndex => summary after reading that page
   summary:       '',   // rolling "story so far" summary
+  glossaryCache: {},   // pageIndex => glossary snapshot after reading that page
+  glossary:      {},   // { term: definition } of invented names/terms/concepts so far
   nextTeaser:    '',   // first few words of the next page
   streaming:     false,
   hasPageImages: false,
@@ -333,6 +335,7 @@ const jumpInput      = $('jump-input');
 const jumpBtn        = $('jump-btn');
 const nearbyPages    = $('nearby-pages');
 const skippedPages   = $('skipped-pages');
+const glossaryPanel  = $('glossary-panel');
 const depthBtns      = document.querySelectorAll('.depth-btn');
 const langBtns       = document.querySelectorAll('.lang-btn');
 const reExplain      = $('re-explain');
@@ -453,6 +456,8 @@ function initBook(data) {
   state.cache        = {};
   state.summaryCache = {};
   state.summary      = '';
+  state.glossaryCache = {};
+  state.glossary     = {};
   state.hasPageImages = data.has_page_images || data.is_comic || false;
   state.documentUrl   = data.document_url || '';
 
@@ -566,6 +571,17 @@ function goToPage(index) {
     if (state.summaryCache[i]) { state.summary = state.summaryCache[i]; break; }
   }
 
+  // Same idea for the glossary, but inclusive of this page itself — unlike
+  // the "story so far" summary (which should describe only what came
+  // before the page about to be shown), the glossary panel is a reference
+  // the reader checks while ON a page, so revisiting an already-read page
+  // should still show the terms it introduced, not just earlier ones.
+  state.glossary = {};
+  for (let i = index; i >= 0; i--) {
+    if (state.glossaryCache[i]) { state.glossary = state.glossaryCache[i]; break; }
+  }
+  updateGlossaryPanel();
+
   updateNav();
   updateNearbyPages();
   loadPage(index, false);
@@ -640,6 +656,39 @@ function updateSkippedPages() {
   });
 }
 
+// Invented names, terms, and concepts explained so far, so a reader on page
+// 600 can be reminded what something from page 10 meant without re-reading.
+function updateGlossaryPanel() {
+  const terms = Object.keys(state.glossary);
+  if (!terms.length) {
+    glossaryPanel.hidden = true;
+    glossaryPanel.innerHTML = '';
+    return;
+  }
+
+  glossaryPanel.hidden = false;
+  glossaryPanel.innerHTML = '';
+
+  const label = document.createElement('div');
+  label.className = 'glossary-label';
+  label.textContent = 'Glossary';
+  glossaryPanel.appendChild(label);
+
+  terms.sort((a, b) => a.localeCompare(b)).forEach(term => {
+    const el = document.createElement('div');
+    el.className = 'glossary-item';
+    const name = document.createElement('span');
+    name.className = 'glossary-term';
+    name.textContent = term;
+    const def = document.createElement('span');
+    def.className = 'glossary-def';
+    def.textContent = state.glossary[term];
+    el.appendChild(name);
+    el.appendChild(def);
+    glossaryPanel.appendChild(el);
+  });
+}
+
 // ── Explanation ───────────────────────────────────────────────────────────────
 // Navigating away mid-stream cancels the old request instead of blocking the
 // new one — activeLoadToken marks which call is still "current" so a
@@ -682,6 +731,7 @@ async function loadPage(index, forceRefresh) {
         mode:       state.mode,
         summary:    state.summary,
         language:   state.language,
+        glossary:   state.glossary,
       }),
       signal: controller.signal,
     });
@@ -751,11 +801,13 @@ async function updateSummary(pageIndex) {
         page_index:      pageIndex,
         current_summary: state.summary,
         language:        state.language,
+        glossary:        state.glossary,
       }),
     });
     if (res.ok) {
       const data = await res.json();
-      state.summaryCache[pageIndex] = data.summary;
+      state.summaryCache[pageIndex]  = data.summary;
+      state.glossaryCache[pageIndex] = data.glossary || state.glossary;
 
       // Only touch the live "story so far" context if the user hasn't
       // already navigated elsewhere while this request was in flight —
@@ -764,8 +816,10 @@ async function updateSummary(pageIndex) {
       if (pageIndex === state.currentIndex) {
         state.summary    = data.summary;
         state.nextTeaser = data.next_teaser || '';
+        state.glossary   = state.glossaryCache[pageIndex];
         const box = document.getElementById('context-box');
         if (box) box.outerHTML = overviewHTML();
+        updateGlossaryPanel();
       }
     }
   } catch { /* fail silently — summary is nice-to-have, not critical */ }
@@ -775,7 +829,7 @@ function render(markdown) {
   const div = document.createElement('div');
   div.className = 'explanation';
   div.innerHTML = marked.parse(markdown);
-  output.innerHTML = overviewHTML() + comicImageHTML(state.currentIndex);
+  output.innerHTML = overviewHTML() + pageImageHTML(state.currentIndex);
   output.appendChild(div);
   addTTSBar(div.innerText);
 }

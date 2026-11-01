@@ -400,13 +400,70 @@ def classify_front_matter(pages: list[dict]) -> set[int]:
         return set()
 
 
+def update_glossary(glossary: dict, page: dict, language: str) -> dict:
+    """Extract/update invented names, terms, and concepts from a page so they
+    can be reminded to the reader whenever they resurface much later in the
+    book — this is what makes the glossary useful past page 100, not just a
+    one-time definition that gets forgotten."""
+    lang_name = LANGUAGE_NAMES[normalize_language(language)]
+    existing = "\n".join(f"- {term}: {definition}" for term, definition in glossary.items()) or "(none yet)"
+    instructions = (
+        f"Glossary so far:\n{existing}\n\n"
+        "List any invented names, places, factions, philosophies, or concepts "
+        "on this page that a first-time reader would need defined or reminded "
+        "of — especially ones central to understanding later parts of the "
+        "book. Skip real-world common words, and skip anything already "
+        "correctly covered by the glossary above unless its meaning has "
+        "meaningfully deepened or changed. Keep definitions purely factual — "
+        "don't reveal a character's fate, loyalty, or any future plot "
+        "development that hasn't happened on this page yet.\n\n"
+        f"Reply in {lang_name}, one entry per line, exactly in this format:\n"
+        "Term: one-sentence definition\n\n"
+        "Reply with just the word NONE if there's nothing to add or update."
+    )
+
+    try:
+        if page.get("image_data"):
+            content = [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": page["media_type"], "data": page["image_data"]},
+                },
+                {"type": "text", "text": instructions},
+            ]
+        else:
+            content = f"Page text:\n{page['text'][:2000]}\n\n{instructions}"
+
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": content}],
+        )
+        reply = msg.content[0].text.strip()
+        if reply.upper() == "NONE":
+            return glossary
+
+        updated = dict(glossary)
+        for line in reply.splitlines():
+            if ":" not in line:
+                continue
+            term, _, definition = line.partition(":")
+            term = term.strip().lstrip("-•").strip()
+            definition = definition.strip()
+            if term and definition:
+                updated[term] = definition
+        return updated
+    except Exception:
+        return glossary
+
+
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
 PROMPTS = {
     "short": """\
 You're a friend who already read this book, walking someone who doesn't read much through it page by page.
 
-You're given context about the book, a running story summary (if available), the previous page (if available), and the current page.
+You're given context about the book, a running story summary (if available), a glossary of invented names/terms/concepts defined so far (if available), the previous page (if available), and the current page.
 
 Important: pages are physical PDF pages, so they often cut off mid-sentence. That's normal. If the page ends mid-thought, don't just stop — briefly say what the scene or moment was building toward, even if it wasn't finished on this page.
 
@@ -419,7 +476,7 @@ Under 150 words. Casual and warm.""",
     "medium": """\
 You're a friend who already read this book, walking someone who doesn't read much through it page by page. They struggle to connect ideas — make every link feel natural and obvious.
 
-You're given context about the book, a running story summary (if available), the previous page (if available), and the current page.
+You're given context about the book, a running story summary (if available), a glossary of invented names/terms/concepts defined so far (if available), the previous page (if available), and the current page.
 
 Important: pages are physical PDF pages, so they often cut off mid-sentence. That's normal. If the page ends mid-thought, don't just stop there — briefly tell them what the scene was heading toward and that it continues on the next page, so nothing feels like it's just dying out.
 
@@ -432,7 +489,7 @@ Sound like a friend, not a teacher filling out a form.""",
     "long": """\
 You're a patient friend who already read this book carefully, walking someone through it page by page. They struggle to connect ideas between sentences, between pages, and across the whole book — leave nothing implicit, but make it feel natural.
 
-You're given context about the book, a running story summary (if available), the previous page (if available), and the current page.
+You're given context about the book, a running story summary (if available), a glossary of invented names/terms/concepts defined so far (if available), the previous page (if available), and the current page.
 
 Important: pages are physical PDF pages, so they often cut off mid-sentence or mid-scene. That's normal — don't let the explanation just trail off when this happens. If the page ends mid-thought, explicitly tell them: what was the scene building toward, what's the tension that's about to pay off, and that it continues on the next page. Make the cut-off feel like a cliffhanger, not an oversight.
 
@@ -607,6 +664,7 @@ class ExplainRequest(BaseModel):
     page_index: int
     mode: str
     summary: str = ""  # rolling "story so far" built up as the user reads
+    glossary: dict[str, str] = {}  # invented names/terms/concepts defined so far
     language: str = "english"
 
 
@@ -614,6 +672,7 @@ class SummarizeRequest(BaseModel):
     content_id: str
     page_index: int
     current_summary: str = ""
+    glossary: dict[str, str] = {}
     language: str = "english"
 
 
@@ -642,12 +701,21 @@ async def explain(req: ExplainRequest, request: Request):
         + f"\n\nWrite your entire response in {lang_name}, regardless of what language the page itself is written in."
     )
 
-    # Build context: book overview → rolling summary → previous page → current page
+    # Build context: book overview → rolling summary → glossary → previous page → current page
     parts = []
     if overview:
         parts.append(f'About this book:\n"""\n{overview}\n"""')
     if req.summary.strip():
         parts.append(f'Story so far:\n"""\n{req.summary.strip()}\n"""')
+    if req.glossary:
+        glossary_lines = "\n".join(f"- {term}: {definition}" for term, definition in req.glossary.items())
+        parts.append(
+            'Glossary of invented names, terms, and concepts defined so far:\n"""\n'
+            f'{glossary_lines}\n"""\n'
+            "If any of these resurface on the current page, briefly remind the reader "
+            "what they mean in passing — don't assume they remember a term from way "
+            "earlier, the way this glossary does."
+        )
     if req.page_index > 0:
         prev = pages[req.page_index - 1]
         parts.append(f'Previous page ({prev["title"]}):\n"""\n{prev["text"][:2500]}\n"""')
@@ -764,7 +832,9 @@ async def summarize(req: SummarizeRequest):
         next_text = pages[req.page_index + 1]["text"]
         next_teaser = " ".join(next_text.split()[:30])
 
-    return {"summary": msg.content[0].text.strip(), "next_teaser": next_teaser}
+    glossary = await asyncio.to_thread(update_glossary, req.glossary, page, req.language)
+
+    return {"summary": msg.content[0].text.strip(), "next_teaser": next_teaser, "glossary": glossary}
 
 
 DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs "Rachel" (English)

@@ -160,6 +160,40 @@ body {
 }
 .skipped-page-item:hover { background: var(--surface); color: var(--text); opacity: 1; }
 
+.glossary-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.glossary-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 0 10px 4px;
+}
+.glossary-item {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.glossary-term {
+  font-weight: 600;
+  color: var(--text);
+}
+.glossary-def {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 /* ── Main ─────────────────────────────────────────────────────────────────── */
 
 main {
