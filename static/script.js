@@ -484,6 +484,11 @@ function initBook(data) {
   let startIndex;
   if (typeof data.resume_index === 'number' && data.resume_index >= 0 && data.resume_index < state.pages.length) {
     startIndex = data.resume_index;
+    // Seed the glossary cache with whatever was saved for this book, so
+    // goToPage below picks it straight back up instead of starting empty.
+    if (data.resume_glossary && Object.keys(data.resume_glossary).length) {
+      state.glossaryCache[startIndex] = data.resume_glossary;
+    }
   } else {
     startIndex = 0;
     while (startIndex < state.pages.length - 1 && state.pages[startIndex].skip) {
@@ -596,7 +601,7 @@ function saveProgress(index) {
   fetch('/progress', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ content_id: state.contentId, page_index: index }),
+    body:    JSON.stringify({ content_id: state.contentId, page_index: index, glossary: state.glossary }),
   }).catch(() => {});
 }
 
@@ -820,6 +825,7 @@ async function updateSummary(pageIndex) {
         const box = document.getElementById('context-box');
         if (box) box.outerHTML = overviewHTML();
         updateGlossaryPanel();
+        saveProgress(pageIndex); // persist newly-learned glossary terms right away
       }
     }
   } catch { /* fail silently — summary is nice-to-have, not critical */ }

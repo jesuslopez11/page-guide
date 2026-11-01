@@ -71,6 +71,10 @@ def ensure_progress_table():
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
             """)
+            cur.execute("""
+                ALTER TABLE reading_progress
+                ADD COLUMN IF NOT EXISTS glossary JSONB NOT NULL DEFAULT '{}'::jsonb
+            """)
     except Exception:
         pass
     finally:
@@ -87,29 +91,30 @@ def get_saved_progress(content_hash: str):
     try:
         with conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT page_index FROM reading_progress WHERE content_hash = %s",
+                "SELECT page_index, glossary FROM reading_progress WHERE content_hash = %s",
                 (content_hash,),
             )
             row = cur.fetchone()
-            return row[0] if row else None
+            return {"page_index": row[0], "glossary": row[1] or {}} if row else None
     except Exception:
         return None
     finally:
         conn.close()
 
 
-def save_progress(content_hash: str, title: str, page_index: int) -> bool:
+def save_progress(content_hash: str, title: str, page_index: int, glossary: dict) -> bool:
     conn = get_db_connection()
     if not conn:
         return False
     try:
         with conn, conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO reading_progress (content_hash, title, page_index, updated_at)
-                VALUES (%s, %s, %s, now())
+                INSERT INTO reading_progress (content_hash, title, page_index, glossary, updated_at)
+                VALUES (%s, %s, %s, %s, now())
                 ON CONFLICT (content_hash) DO UPDATE
-                SET page_index = EXCLUDED.page_index, updated_at = now(), title = EXCLUDED.title
-            """, (content_hash, title, page_index))
+                SET page_index = EXCLUDED.page_index, glossary = EXCLUDED.glossary,
+                    updated_at = now(), title = EXCLUDED.title
+            """, (content_hash, title, page_index, json.dumps(glossary)))
         return True
     except Exception:
         return False
@@ -558,7 +563,7 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
 
     content_id = str(uuid.uuid4())
     content_hash = hashlib.sha256(raw).hexdigest()
-    resume_index = await asyncio.to_thread(get_saved_progress, content_hash)
+    saved = await asyncio.to_thread(get_saved_progress, content_hash)
     content_store[content_id] = {
         "title": file.filename,
         "pages": pages,
@@ -579,7 +584,8 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         "is_comic": is_comic,
         "has_page_images": has_page_images,
         "document_url": f"/document?content_id={content_id}",
-        "resume_index": resume_index,
+        "resume_index": saved["page_index"] if saved else None,
+        "resume_glossary": saved["glossary"] if saved else {},
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"], "skip": p["skip"]}
             for p in pages
@@ -631,7 +637,7 @@ async def upload_url(req: UrlUploadRequest):
     content_hash = hashlib.sha256(
         content["pdf_bytes"] if is_pdf_link else url.encode()
     ).hexdigest()
-    resume_index = await asyncio.to_thread(get_saved_progress, content_hash)
+    saved = await asyncio.to_thread(get_saved_progress, content_hash)
     content_store[content_id] = {
         "title": title,
         "pages": pages,
@@ -651,7 +657,8 @@ async def upload_url(req: UrlUploadRequest):
         "is_comic": False,
         "has_page_images": content["has_page_images"],
         "document_url": f"/document?content_id={content_id}" if is_pdf_link else url,
-        "resume_index": resume_index,
+        "resume_index": saved["page_index"] if saved else None,
+        "resume_glossary": saved["glossary"] if saved else {},
         "pages": [
             {"index": p["index"], "title": p["title"], "page_num": p["page_num"], "skip": p["skip"]}
             for p in pages
@@ -992,18 +999,21 @@ async def get_page_text(content_id: str, page_index: int):
 class ProgressRequest(BaseModel):
     content_id: str
     page_index: int
+    glossary: dict[str, str] = {}
 
 
 @app.post("/progress")
 async def save_reading_progress(req: ProgressRequest):
-    """Remember the current page for this book so it can be resumed on any
-    device. Best-effort — silently does nothing if there's no database
-    configured or it's briefly unreachable, since this is a nice-to-have,
-    not something that should ever block reading."""
+    """Remember the current page and glossary for this book so it can be
+    resumed on any device. Best-effort — silently does nothing if there's no
+    database configured or it's briefly unreachable, since this is a
+    nice-to-have, not something that should ever block reading."""
     store = content_store.get(req.content_id)
     if not store or not store.get("content_hash"):
         return {"saved": False}
-    saved = await asyncio.to_thread(save_progress, store["content_hash"], store.get("title") or "", req.page_index)
+    saved = await asyncio.to_thread(
+        save_progress, store["content_hash"], store.get("title") or "", req.page_index, req.glossary
+    )
     return {"saved": saved}
 
 
