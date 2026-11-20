@@ -1,11 +1,23 @@
 const $ = id => document.getElementById(id);
 
+// Remembers the "pages at a time" choice across visits (new tab, tomorrow,
+// after closing the browser) — this is just a per-browser preference, not
+// reading progress, so localStorage is the right place for it rather than
+// the server.
+function loadPagesPerStepPref() {
+  try {
+    const saved = parseInt(localStorage.getItem('pagesPerStep'), 10);
+    if (saved === 1 || saved === 2 || saved === 3) return saved;
+  } catch { /* private browsing or storage disabled — just use the default */ }
+  return 1;
+}
+
 const state = {
   contentId:     null,
   pages:         [],   // [{index, title, page_num}]
   overview:      '',   // generated once on upload — what this book is about
   currentIndex:  0,
-  pagesPerStep:  1,    // how many pages get bundled into one explanation
+  pagesPerStep:  loadPagesPerStepPref(),   // how many pages get bundled into one explanation
   mode:          'short',
   language:      'english',
   cache:         {},   // `${index}-${mode}-${language}` => markdown string
@@ -570,11 +582,19 @@ langBtns.forEach(btn => {
   });
 });
 
+// Reflect the restored preference onto the buttons themselves — the HTML
+// hardcodes "1" as active by default, which is wrong if a different choice
+// was remembered from a previous visit.
+pagesPerStepBtns.forEach(btn => {
+  btn.classList.toggle('active', parseInt(btn.dataset.pages, 10) === state.pagesPerStep);
+});
+
 pagesPerStepBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     pagesPerStepBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     state.pagesPerStep = parseInt(btn.dataset.pages, 10);
+    try { localStorage.setItem('pagesPerStep', state.pagesPerStep); } catch { /* ignore */ }
     if (state.contentId) {
       updateNav();
       updateNearbyPages();
