@@ -5,6 +5,7 @@ const state = {
   pages:         [],   // [{index, title, page_num}]
   overview:      '',   // generated once on upload — what this book is about
   currentIndex:  0,
+  pagesPerStep:  1,    // how many pages get bundled into one explanation
   mode:          'short',
   language:      'english',
   cache:         {},   // `${index}-${mode}-${language}` => markdown string
@@ -236,11 +237,17 @@ function addTTSBar(explanationText) {
     btnPage.textContent = '⏳ Loading…';
     btnPage.disabled = true;
     try {
-      const res = await fetch(`/page-text?content_id=${state.contentId}&page_index=${state.currentIndex}`);
-      const data = await res.json();
+      // Read every page in the current step, not just the first — otherwise
+      // grouping 2-3 pages together would silently only read page one aloud.
+      const step  = getForwardStep(state.currentIndex);
+      const texts = await Promise.all(step.map(async i => {
+        const res = await fetch(`/page-text?content_id=${state.contentId}&page_index=${i}`);
+        const data = await res.json();
+        return data.text;
+      }));
       btnPage.disabled = false;
       btnPage.textContent = btnPage.dataset.label;
-      ttsPlay(btnPage, data.text);
+      ttsPlay(btnPage, texts.join('\n\n'));
     } catch {
       btnPage.disabled = false;
       btnPage.textContent = btnPage.dataset.label;
@@ -317,12 +324,48 @@ function stopAutoPlay() {
   stopAudio();
 }
 
+// A "step" is the group of consecutive pages explained together, sized by
+// state.pagesPerStep. A front-matter (skip) page is always shown alone,
+// never bundled with neighbors, so it stays easy to jump to and review on
+// its own exactly like before this feature existed.
+function getForwardStep(startIndex) {
+  const first = state.pages[startIndex];
+  if (!first) return [];
+  if (first.skip) return [startIndex];
+  const result = [startIndex];
+  let i = startIndex + 1;
+  while (result.length < state.pagesPerStep && i < state.pages.length && !state.pages[i].skip) {
+    result.push(i);
+    i++;
+  }
+  return result;
+}
+
+// Mirror of getForwardStep, used to find where the PREVIOUS step starts
+// when going backward, so Prev and Next stay symmetric regardless of
+// pagesPerStep (this is exactly the bug that was fixed for single-page
+// front-matter skipping — same fix applies here).
+function getBackwardStep(endIndex) {
+  const last = state.pages[endIndex];
+  if (!last) return [];
+  if (last.skip) return [endIndex];
+  const result = [endIndex];
+  let i = endIndex - 1;
+  while (result.length < state.pagesPerStep && i >= 0 && !state.pages[i].skip) {
+    result.unshift(i);
+    i--;
+  }
+  return result;
+}
+
 function advanceAutoPlay() {
-  if (state.currentIndex >= state.pages.length - 1) {
+  const step = getForwardStep(state.currentIndex);
+  const nextStart = step[step.length - 1] + 1;
+  if (nextStart >= state.pages.length) {
     stopAutoPlay(); // reached the end of the book
     return;
   }
-  goToPage(state.currentIndex + 1);
+  goToPage(nextStart);
 }
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -338,6 +381,7 @@ const skippedPages   = $('skipped-pages');
 const glossaryPanel  = $('glossary-panel');
 const depthBtns      = document.querySelectorAll('.depth-btn');
 const langBtns       = document.querySelectorAll('.lang-btn');
+const pagesPerStepBtns = document.querySelectorAll('.pages-per-step-btn');
 const reExplain      = $('re-explain');
 const openDocumentBtn = $('open-document');
 const autoPlayBtn    = $('auto-play-btn');
@@ -526,6 +570,19 @@ langBtns.forEach(btn => {
   });
 });
 
+pagesPerStepBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    pagesPerStepBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.pagesPerStep = parseInt(btn.dataset.pages, 10);
+    if (state.contentId) {
+      updateNav();
+      updateNearbyPages();
+      loadPage(state.currentIndex, true);
+    }
+  });
+});
+
 reExplain.addEventListener('click', () => loadPage(state.currentIndex, true));
 openDocumentBtn.addEventListener('click', () => {
   if (state.documentUrl) window.open(state.documentUrl, '_blank', 'noopener');
@@ -540,10 +597,22 @@ autoPlayBtn.addEventListener('click', () => {
 // Prev while auto-play is still running (nothing ever turned it off) loads
 // the earlier page, reads it aloud since auto-play is still on, then
 // auto-advances forward again the moment that finishes, undoing the Prev.
-prevBtn.addEventListener('click',    () => { stopAutoPlay(); goToPage(state.currentIndex - 1); });
-nextBtn.addEventListener('click',    () => { stopAutoPlay(); goToPage(state.currentIndex + 1); });
-prevBottom.addEventListener('click', () => { stopAutoPlay(); goToPage(state.currentIndex - 1); });
-nextBottom.addEventListener('click', () => { stopAutoPlay(); goToPage(state.currentIndex + 1); });
+// Prev/Next move by a whole step (however many pages are currently bundled
+// together), not just one page — getForwardStep/getBackwardStep figure out
+// exactly where the current step ends/the previous one starts.
+function goToNextStep() {
+  const step = getForwardStep(state.currentIndex);
+  goToPage(step[step.length - 1] + 1);
+}
+function goToPrevStep() {
+  const prevStep = getBackwardStep(state.currentIndex - 1);
+  goToPage(prevStep.length ? prevStep[0] : state.currentIndex - 1);
+}
+
+prevBtn.addEventListener('click',    () => { stopAutoPlay(); goToPrevStep(); });
+nextBtn.addEventListener('click',    () => { stopAutoPlay(); goToNextStep(); });
+prevBottom.addEventListener('click', () => { stopAutoPlay(); goToPrevStep(); });
+nextBottom.addEventListener('click', () => { stopAutoPlay(); goToNextStep(); });
 
 jumpBtn.addEventListener('click', () => {
   const target = parseInt(jumpInput.value);
@@ -556,8 +625,8 @@ jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpBtn.clic
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { stopAutoPlay(); goToPage(state.currentIndex + 1); }
-  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   { stopAutoPlay(); goToPage(state.currentIndex - 1); }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { stopAutoPlay(); goToNextStep(); }
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   { stopAutoPlay(); goToPrevStep(); }
 });
 
 function goToPage(index) {
@@ -608,18 +677,23 @@ function saveProgress(index) {
 function updateNav() {
   const i     = state.currentIndex;
   const total = state.pages.length;
+  const step  = getForwardStep(i);
   const p     = state.pages[i];
   const last  = state.pages[total - 1];
+  const stepLast = state.pages[step[step.length - 1]];
 
-  pageLabel.textContent = `Page ${p.page_num} of ${last.page_num}`;
+  pageLabel.textContent = step.length > 1
+    ? `Pages ${p.page_num}–${stepLast.page_num} of ${last.page_num}`
+    : `Page ${p.page_num} of ${last.page_num}`;
   prevBtn.disabled    = i === 0;
-  nextBtn.disabled    = i === total - 1;
+  nextBtn.disabled    = step[step.length - 1] === total - 1;
   prevBottom.disabled = i === 0;
-  nextBottom.disabled = i === total - 1;
+  nextBottom.disabled = step[step.length - 1] === total - 1;
 }
 
 function updateNearbyPages() {
   const i     = state.currentIndex;
+  const step  = getForwardStep(i);
   const start = Math.max(0, i - 3);
   const end   = Math.min(state.pages.length - 1, i + 3);
 
@@ -627,7 +701,7 @@ function updateNearbyPages() {
   for (let j = start; j <= end; j++) {
     const p  = state.pages[j];
     const el = document.createElement('div');
-    el.className = 'page-item' + (j === i ? ' active' : '');
+    el.className = 'page-item' + (step.includes(j) ? ' active' : '');
     el.textContent = p.title;
     el.addEventListener('click', () => { stopAutoPlay(); goToPage(j); closeSidebar(); });
     nearbyPages.appendChild(el);
@@ -702,7 +776,8 @@ let activeLoadToken = 0;
 let activeAbortController = null;
 
 async function loadPage(index, forceRefresh) {
-  const key = `${index}-${state.mode}-${state.language}`;
+  const step = getForwardStep(index);
+  const key  = `${index}-${state.pagesPerStep}-${state.mode}-${state.language}`;
 
   // Whatever was previously loading is no longer wanted — cancel it so it
   // stops burning tokens and can't race with what we're about to show.
@@ -721,7 +796,7 @@ async function loadPage(index, forceRefresh) {
   activeAbortController = controller;
   state.streaming = true;
 
-  output.innerHTML = overviewHTML() + pageImageHTML(index) + `
+  output.innerHTML = overviewHTML() + pageImagesHTML(step) + `
     <div class="loading-wrap">
       <div class="loading-dots"><span></span><span></span><span></span></div>
     </div>`;
@@ -731,12 +806,12 @@ async function loadPage(index, forceRefresh) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
-        content_id: state.contentId,
-        page_index: index,
-        mode:       state.mode,
-        summary:    state.summary,
-        language:   state.language,
-        glossary:   state.glossary,
+        content_id:   state.contentId,
+        page_indices: step,
+        mode:         state.mode,
+        summary:      state.summary,
+        language:     state.language,
+        glossary:     state.glossary,
       }),
       signal: controller.signal,
     });
@@ -755,7 +830,7 @@ async function loadPage(index, forceRefresh) {
 
     const div = document.createElement('div');
     div.className = 'explanation';
-    output.innerHTML = overviewHTML() + pageImageHTML(index);
+    output.innerHTML = overviewHTML() + pageImagesHTML(step);
     output.appendChild(div);
     output.scrollTop = 0;
 
@@ -786,7 +861,7 @@ async function loadPage(index, forceRefresh) {
     addTTSBar(div.innerText);
 
     // Update the rolling summary in the background after the page is read
-    updateSummary(index);
+    updateSummary(index, step);
   } catch (err) {
     if (err.name === 'AbortError') return; // superseded by a newer page load
     output.innerHTML = `<div class="error-box">${err.message}</div>`;
@@ -796,14 +871,15 @@ async function loadPage(index, forceRefresh) {
   }
 }
 
-async function updateSummary(pageIndex) {
+async function updateSummary(pageIndex, step) {
+  step = step || getForwardStep(pageIndex);
   try {
     const res = await fetch('/summarize', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
         content_id:      state.contentId,
-        page_index:      pageIndex,
+        page_indices:    step,
         current_summary: state.summary,
         language:        state.language,
         glossary:        state.glossary,
@@ -835,7 +911,7 @@ function render(markdown) {
   const div = document.createElement('div');
   div.className = 'explanation';
   div.innerHTML = marked.parse(markdown);
-  output.innerHTML = overviewHTML() + pageImageHTML(state.currentIndex);
+  output.innerHTML = overviewHTML() + pageImagesHTML(getForwardStep(state.currentIndex));
   output.appendChild(div);
   addTTSBar(div.innerText);
 }
@@ -849,6 +925,13 @@ function pageImageHTML(index) {
          onerror="this.style.display='none'; this.nextElementSibling.style.display='block'" />
     <p style="display:none;color:#888;text-align:center;padding:12px">⚠️ Page image could not be loaded</p>
   </div>`;
+}
+
+// Same as pageImageHTML, but for every page in a step — each page still
+// gets its own image shown individually (not merged), so the zoom lightbox
+// keeps working exactly like it did for a single page.
+function pageImagesHTML(indices) {
+  return indices.map(pageImageHTML).join('');
 }
 
 // Holds the cleanup for whichever lightbox is currently open, so Escape/close

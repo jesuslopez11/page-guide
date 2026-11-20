@@ -505,6 +505,36 @@ Open by grounding them in the bigger story using the book overview and summary �
 Warm, thorough, and conversational throughout.""",
 }
 
+SHORT_MODE_WORDS_PER_PAGE = 150  # matches the "Under 150 words" cap written into PROMPTS["short"]
+
+
+def build_system_prompt(mode: str, num_pages: int, lang_name: str) -> str:
+    """The base PROMPTS text is written for exactly one page. For a single
+    page (the normal case) it's used unchanged. When several pages are
+    being explained in one go, append instructions telling Claude to give
+    each page its own full-depth section instead of blending or compressing
+    them to fit — otherwise a multi-page request would cram several pages'
+    worth of story into the same short word count meant for just one."""
+    base = PROMPTS[mode]
+    if num_pages > 1:
+        multi_page_note = (
+            f"\n\nYou're covering {num_pages} pages in this single response, not just one. "
+            f"Treat it as {num_pages} separate page-explanations back to back — don't blend, "
+            "compress, or summarize across pages to save space. Before each page's section, put "
+            'a short heading on its own line like "Page 12" (using that page\'s own page number), '
+            "then give that page the exact same style and level of detail described above, as if "
+            "it were the only page you were explaining."
+        )
+        if mode == "short":
+            total_words = SHORT_MODE_WORDS_PER_PAGE * num_pages
+            multi_page_note += (
+                f" Each page's section should still be under {SHORT_MODE_WORDS_PER_PAGE} words on "
+                f"its own, same as if it were alone — so roughly {total_words} words total, not one "
+                "squeezed-down summary."
+            )
+        base += multi_page_note
+    return base + f"\n\nWrite your entire response in {lang_name}, regardless of what language the page itself is written in."
+
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -668,7 +698,7 @@ async def upload_url(req: UrlUploadRequest):
 
 class ExplainRequest(BaseModel):
     content_id: str
-    page_index: int
+    page_indices: list[int]
     mode: str
     summary: str = ""  # rolling "story so far" built up as the user reads
     glossary: dict[str, str] = {}  # invented names/terms/concepts defined so far
@@ -677,7 +707,7 @@ class ExplainRequest(BaseModel):
 
 class SummarizeRequest(BaseModel):
     content_id: str
-    page_index: int
+    page_indices: list[int]
     current_summary: str = ""
     glossary: dict[str, str] = {}
     language: str = "english"
@@ -692,23 +722,24 @@ async def explain(req: ExplainRequest, request: Request):
     pages = store["pages"]
     overview = store.get("overview", "")
 
-    if req.page_index < 0 or req.page_index >= len(pages):
-        raise HTTPException(400, "Invalid page index.")
+    if not req.page_indices:
+        raise HTTPException(400, "No pages given.")
+    for idx in req.page_indices:
+        if idx < 0 or idx >= len(pages):
+            raise HTTPException(400, "Invalid page index.")
 
-    page = pages[req.page_index]
+    group = [pages[idx] for idx in req.page_indices]
+    first_page, first_index = group[0], req.page_indices[0]
 
-    is_comic_page = bool(page.get("image_data"))
-    if not is_comic_page and len(page["text"].strip()) < 80:
+    is_comic = bool(first_page.get("image_data"))
+    if not is_comic and sum(len(p["text"].strip()) for p in group) < 80:
         raise HTTPException(400, "This page has too little content to explain.")
 
     mode = req.mode if req.mode in PROMPTS else "medium"
     lang_name = LANGUAGE_NAMES[normalize_language(req.language)]
-    system_prompt = (
-        PROMPTS[mode]
-        + f"\n\nWrite your entire response in {lang_name}, regardless of what language the page itself is written in."
-    )
+    system_prompt = build_system_prompt(mode, len(group), lang_name)
 
-    # Build context: book overview → rolling summary → glossary → previous page → current page
+    # Build context: book overview → rolling summary → glossary → previous page → current page(s)
     parts = []
     if overview:
         parts.append(f'About this book:\n"""\n{overview}\n"""')
@@ -723,33 +754,41 @@ async def explain(req: ExplainRequest, request: Request):
             "what they mean in passing — don't assume they remember a term from way "
             "earlier, the way this glossary does."
         )
-    if req.page_index > 0:
-        prev = pages[req.page_index - 1]
+    if first_index > 0:
+        prev = pages[first_index - 1]
         parts.append(f'Previous page ({prev["title"]}):\n"""\n{prev["text"][:2500]}\n"""')
-    parts.append(f'Current page ({page["title"]}):\n"""\n{page["text"]}\n"""')
-    parts.append("Walk me through this page.")
+    if len(group) == 1:
+        parts.append(f'Current page ({first_page["title"]}):\n"""\n{first_page["text"]}\n"""')
+        parts.append("Walk me through this page.")
+    else:
+        page_blocks = "\n\n".join(f'Page {p["page_num"]} ({p["title"]}):\n"""\n{p["text"]}\n"""' for p in group)
+        parts.append(f"Current pages:\n{page_blocks}")
+        parts.append("Walk me through these pages, one at a time, in order.")
 
     user_msg = "\n\n".join(parts)
 
     model = "claude-sonnet-4-6" if mode == "long" else "claude-haiku-4-5-20251001"
 
     # Build message content — comic pages use vision, text pages use plain text
-    is_comic = bool(page.get("image_data"))
     if is_comic:
-        # Include previous page image + current page image if available
+        # Include previous page image + each current page's image, in order
         vision_content = []
-        if req.page_index > 0:
-            prev = pages[req.page_index - 1]
+        if first_index > 0:
+            prev = pages[first_index - 1]
             if prev.get("image_data"):
                 vision_content.append({
                     "type": "image",
                     "source": {"type": "base64", "media_type": prev["media_type"], "data": prev["image_data"]},
                 })
                 vision_content.append({"type": "text", "text": f"(Previous page — {prev['title']})"})
-        vision_content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": page["media_type"], "data": page["image_data"]},
-        })
+        for p in group:
+            if p.get("image_data"):
+                vision_content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": p["media_type"], "data": p["image_data"]},
+                })
+                if len(group) > 1:
+                    vision_content.append({"type": "text", "text": f"(Page {p['page_num']} — {p['title']})"})
         vision_content.append({"type": "text", "text": user_msg})
         message_content = vision_content
     else:
@@ -782,35 +821,45 @@ async def explain(req: ExplainRequest, request: Request):
 
 @app.post("/summarize")
 async def summarize(req: SummarizeRequest):
-    """Update the rolling story summary after a page is read."""
+    """Update the rolling story summary after a page (or several pages, read
+    together as one group) is read."""
     if req.content_id not in content_store:
         raise HTTPException(404, "Content not found.")
 
     pages = content_store[req.content_id]["pages"]
 
-    if req.page_index < 0 or req.page_index >= len(pages):
-        raise HTTPException(400, "Invalid page index.")
+    if not req.page_indices:
+        raise HTTPException(400, "No pages given.")
+    for idx in req.page_indices:
+        if idx < 0 or idx >= len(pages):
+            raise HTTPException(400, "Invalid page index.")
 
-    page = pages[req.page_index]
+    group = [pages[idx] for idx in req.page_indices]
+    last_index = req.page_indices[-1]
     current = req.current_summary.strip()
     lang_name = LANGUAGE_NAMES[normalize_language(req.language)]
 
-    is_comic = bool(page.get("image_data"))
+    is_comic = bool(group[0].get("image_data"))
+    summary_prefix = f"Current summary:\n{current}\n\n" if current else ""
+    coverage = "this page" if len(group) == 1 else f"these {len(group)} pages"
 
     if is_comic:
-        summary_prefix = f"Current summary:\n{current}\n\n" if current else ""
         content = []
-        content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": page["media_type"], "data": page["image_data"]},
-        })
+        for p in group:
+            content.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": p["media_type"], "data": p["image_data"]},
+            })
         content.append({
             "type": "text",
             "text": (
-                f"{summary_prefix}This is comic book page {page['page_num']}. "
-                f"Write a 2–4 sentence plain, casual {lang_name} summary covering everything up to and including this page. "
-                "Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
-                "Return only the summary text, nothing else."
+                f"{summary_prefix}This is comic book page {group[0]['page_num']}."
+                if len(group) == 1 else
+                f"{summary_prefix}These are comic book pages {group[0]['page_num']}–{group[-1]['page_num']}, in order."
+            ) + (
+                f" Write a 2–4 sentence plain, casual {lang_name} summary covering everything up to and "
+                f"including {coverage}. Keep it casual, focused on the main story thread, and written like "
+                "a quick catch-up for a friend. Return only the summary text, nothing else."
             ),
         })
         msg = client.messages.create(
@@ -819,11 +868,15 @@ async def summarize(req: SummarizeRequest):
             messages=[{"role": "user", "content": content}],
         )
     else:
-        summary_prefix = f"Current summary:\n{current}\n\n" if current else ""
+        if len(group) == 1:
+            pages_blob = f"New page ({group[0]['title']}):\n{group[0]['text'][:2000]}\n\n"
+        else:
+            pages_blob = "\n\n".join(
+                f'Page {p["page_num"]} ({p["title"]}):\n{p["text"][:2000]}' for p in group
+            ) + "\n\n"
         prompt = (
-            f"{summary_prefix}"
-            f"New page ({page['title']}):\n{page['text'][:2000]}\n\n"
-            f"Write a 2–4 sentence plain, casual {lang_name} summary covering everything up to and including this page. "
+            f"{summary_prefix}{pages_blob}"
+            f"Write a 2–4 sentence plain, casual {lang_name} summary covering everything up to and including {coverage}. "
             f"Keep it casual, focused on the main story thread, and written like a quick catch-up for a friend. "
             f"Return only the summary text, nothing else."
         )
@@ -835,11 +888,16 @@ async def summarize(req: SummarizeRequest):
 
     # Peek at the next page so the UI can show a "coming up" teaser
     next_teaser = ""
-    if req.page_index + 1 < len(pages):
-        next_text = pages[req.page_index + 1]["text"]
+    if last_index + 1 < len(pages):
+        next_text = pages[last_index + 1]["text"]
         next_teaser = " ".join(next_text.split()[:30])
 
-    glossary = await asyncio.to_thread(update_glossary, req.glossary, page, req.language)
+    # Run the glossary update once per page, in order, feeding each result
+    # into the next — the end result is identical to reading these pages
+    # one at a time, just gathered into a single response.
+    glossary = req.glossary
+    for p in group:
+        glossary = await asyncio.to_thread(update_glossary, glossary, p, req.language)
 
     return {"summary": msg.content[0].text.strip(), "next_teaser": next_teaser, "glossary": glossary}
 
@@ -993,7 +1051,7 @@ async def get_page_text(content_id: str, page_index: int):
     pages = store["pages"]
     if page_index < 0 or page_index >= len(pages):
         raise HTTPException(400, "Invalid page index.")
-    return {"text": pages[page_index]}
+    return {"text": pages[page_index]["text"]}
 
 
 class ProgressRequest(BaseModel):

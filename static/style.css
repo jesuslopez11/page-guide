@@ -219,7 +219,7 @@ main {
   gap: 8px;
 }
 .depth-label { font-size: 13px; color: var(--muted); }
-.depth-btn, .lang-btn {
+.depth-btn, .lang-btn, .pages-per-step-btn {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -229,8 +229,8 @@ main {
   cursor: pointer;
   transition: all 0.15s;
 }
-.depth-btn:hover, .lang-btn:hover   { color: var(--text); border-color: var(--accent); }
-.depth-btn.active, .lang-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.depth-btn:hover, .lang-btn:hover, .pages-per-step-btn:hover   { color: var(--text); border-color: var(--accent); }
+.depth-btn.active, .lang-btn.active, .pages-per-step-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .btn-divider {
   width: 1px;
@@ -577,7 +577,7 @@ main {
   }
   .depth-btns::-webkit-scrollbar { display: none; }
   .depth-label { display: none; }
-  .depth-btn, .lang-btn { font-size: 12px; padding: 5px 10px; white-space: nowrap; }
+  .depth-btn, .lang-btn, .pages-per-step-btn { font-size: 12px; padding: 5px 10px; white-space: nowrap; }
 
   /* Re-explain: just the icon, no text */
   .re-explain { padding: 5px 10px; font-size: 14px; }
