@@ -218,7 +218,7 @@ main {
   align-items: center;
   gap: 8px;
 }
-.depth-label { font-size: 13px; color: var(--muted); }
+.depth-label, .pages-label { font-size: 13px; color: var(--muted); }
 .depth-btn, .lang-btn, .pages-per-step-btn {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -239,6 +239,8 @@ main {
   margin: 0 2px;
   flex-shrink: 0;
 }
+
+.mobile-break { display: none; }
 
 .re-explain {
   background: none;
@@ -566,18 +568,30 @@ main {
 
   .menu-btn { display: flex; }
 
-  .top-bar { padding: 10px 12px; gap: 8px; }
+  /* With three groups of buttons now (Depth, Language, Pages-at-a-time),
+     there's no longer room for the controls row and the actions row
+     side by side on a phone — wrap them onto their own full-width rows
+     instead of squeezing everything into one invisibly-scrolling strip. */
+  .top-bar { padding: 10px 12px; gap: 8px; flex-wrap: wrap; row-gap: 8px; }
 
-  /* Depth buttons scroll horizontally, no wrapping */
+  /* Depth/Language break onto their own line, Pages-at-a-time onto the
+     next (via .mobile-break below) — each line comfortably fits a phone
+     screen on its own, so nothing needs to scroll or hide. */
   .depth-btns {
-    overflow-x: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    flex: 1;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    order: 2;
   }
-  .depth-btns::-webkit-scrollbar { display: none; }
   .depth-label { display: none; }
   .depth-btn, .lang-btn, .pages-per-step-btn { font-size: 12px; padding: 5px 10px; white-space: nowrap; }
+
+  /* Force Depth+Language and Pages-at-a-time onto two separate lines —
+     together they're too many buttons for one line on a phone, and this
+     is exactly the kind of invisible overflow that caused the bug where
+     some buttons seemed to just be missing. */
+  .mobile-break { display: block; flex-basis: 100%; height: 0; }
+  .pages-label  { font-size: 11px; white-space: nowrap; }
 
   /* Re-explain: just the icon, no text */
   .re-explain { padding: 5px 10px; font-size: 14px; }
