@@ -161,13 +161,20 @@ function speakFromWord(btn, startWordIndex, onEnd) {
     if (onEnd) onEnd(false);
   };
 
-  utterance.onerror = () => {
+  utterance.onerror = event => {
     panel.remove();
     btn.disabled = false;
     btn.dataset.playing = '';
     btn.textContent = btn.dataset.label;
     activeBtn = null;
     setSkipButtonsEnabled(false);
+    // "canceled"/"interrupted" just means something else (a skip, a pause,
+    // navigating to a new page) intentionally stopped this one — not a
+    // real failure, so don't scare the reader with an error for those.
+    const reason = event && event.error;
+    if (reason && reason !== 'canceled' && reason !== 'interrupted') {
+      showTTSError(`Couldn't read this aloud (${reason}) — tap the button to try again.`);
+    }
     if (onEnd) onEnd(true);
   };
 
@@ -175,7 +182,17 @@ function speakFromWord(btn, startWordIndex, onEnd) {
   btn.dataset.playing = '1';
   btn.textContent = '⏸ Pause';
   setSkipButtonsEnabled(true);
-  speechSynthesis.speak(utterance);
+  // Calling speak() in the very same tick as a cancel() is a well-known way
+  // for the new utterance to silently never start on some browsers (most
+  // notably mobile Safari — exactly the "it just stopped playing" symptom
+  // this is meant to fix). A short delay lets the engine fully settle
+  // after the cancel() above before accepting the next utterance.
+  setTimeout(() => {
+    // Only actually start it if this is still the thing that's supposed to
+    // be playing — something else (navigating away, another skip, stopping
+    // playback entirely) may have taken over during that short delay.
+    if (activeBtn === btn) speechSynthesis.speak(utterance);
+  }, 60);
 }
 
 function skipSeconds(deltaSeconds) {
