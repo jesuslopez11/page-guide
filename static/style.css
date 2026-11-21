@@ -367,6 +367,8 @@ main {
   max-width: 720px;
   margin: 16px auto 0;
   display: flex;
+  flex-wrap: wrap;
+  row-gap: 8px;
   gap: 10px;
 }
 .tts-error {
@@ -390,6 +392,10 @@ main {
 }
 .tts-btn:hover    { border-color: var(--accent); color: var(--accent); }
 .tts-btn:disabled { opacity: 0.5; cursor: default; }
+
+.tts-skip-btn {
+  flex: 0 0 auto;
+}
 
 .speed-control {
   display: flex;

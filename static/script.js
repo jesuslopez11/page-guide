@@ -66,6 +66,7 @@ function stopAudio() {
   const panel = document.getElementById('reading-panel');
   if (panel) panel.remove();
   document.getElementById('tts-error')?.remove();
+  setSkipButtonsEnabled(false);
 }
 
 function showTTSError(msg) {
@@ -79,12 +80,11 @@ function showTTSError(msg) {
   bar.parentNode.insertBefore(el, bar.nextSibling);
 }
 
-function showReadingPanel(text) {
+function showReadingPanel(words) {
   document.getElementById('reading-panel')?.remove();
   const panel = document.createElement('div');
   panel.id = 'reading-panel';
   panel.className = 'reading-panel';
-  const words = text.trim().split(/\s+/);
   panel.innerHTML = words.map((w, i) =>
     `<span class="word" data-i="${i}">${w}</span>`
   ).join(' ');
@@ -93,17 +93,103 @@ function showReadingPanel(text) {
   return panel;
 }
 
-function highlightWord(panel, charIndex) {
-  const spans = panel.querySelectorAll('.word');
-  let count = 0;
-  for (let i = 0; i < spans.length; i++) {
-    spans[i].classList.remove('active');
-    if (count <= charIndex && charIndex < count + spans[i].textContent.length + 1) {
-      spans[i].classList.add('active');
-      spans[i].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
-    count += spans[i].textContent.length + 1;
+function highlightWordByIndex(panel, index) {
+  panel.querySelectorAll('.word.active').forEach(s => s.classList.remove('active'));
+  const span = panel.querySelector(`[data-i="${index}"]`);
+  if (span) {
+    span.classList.add('active');
+    span.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
+}
+
+// The browser's speech engine has no concept of "seek to a timestamp" like a
+// video/audio player does — the only way to jump around is to cancel what's
+// playing and start a brand new utterance from a different point in the
+// text. These track enough state to make that possible: the full word list
+// for whatever's currently playing, roughly how many words-per-second it's
+// actually speaking at (so "skip 15 seconds" means something), and which
+// word the last skip/play started from so boundary events (word-by-word
+// progress callbacks) can be translated back into an absolute position.
+let ttsWords              = [];
+let ttsWordIndex          = 0;
+let ttsUtteranceStartWord = 0;
+let ttsWordsThisUtterance = 0;
+let ttsPlayStartTime      = 0;
+let ttsOnEnd              = null;
+
+function estimateWordsPerSecond() {
+  // Not enough data yet to measure the real pace — fall back to a typical
+  // speaking rate, scaled by the chosen playback speed.
+  if (ttsWordsThisUtterance < 3) return 2.5 * playbackSpeed;
+  const elapsedSeconds = (Date.now() - ttsPlayStartTime) / 1000;
+  return elapsedSeconds > 0 ? ttsWordsThisUtterance / elapsedSeconds : 2.5 * playbackSpeed;
+}
+
+function speakFromWord(btn, startWordIndex, onEnd) {
+  speechSynthesis.cancel();
+  const panel = document.getElementById('reading-panel') || showReadingPanel(ttsWords);
+
+  const remainingText = ttsWords.slice(startWordIndex).join(' ');
+  const utterance = new SpeechSynthesisUtterance(remainingText);
+  utterance.rate = playbackSpeed;
+
+  const lang = state.language === 'spanish' ? 'es-MX' : 'en-US';
+  utterance.lang = lang;
+  const voice = pickVoice(lang);
+  if (voice) utterance.voice = voice;
+
+  ttsUtteranceStartWord = startWordIndex;
+  ttsWordIndex          = startWordIndex;
+  ttsWordsThisUtterance = 0;
+  ttsPlayStartTime      = Date.now();
+  ttsOnEnd              = onEnd;
+
+  utterance.onboundary = e => {
+    if (e.name !== 'word') return;
+    ttsWordsThisUtterance++;
+    ttsWordIndex = ttsUtteranceStartWord + ttsWordsThisUtterance - 1;
+    highlightWordByIndex(panel, ttsWordIndex);
+  };
+
+  utterance.onend = () => {
+    panel.remove();
+    btn.disabled = false;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+    activeBtn = null;
+    setSkipButtonsEnabled(false);
+    if (onEnd) onEnd(false);
+  };
+
+  utterance.onerror = () => {
+    panel.remove();
+    btn.disabled = false;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+    activeBtn = null;
+    setSkipButtonsEnabled(false);
+    if (onEnd) onEnd(true);
+  };
+
+  activeBtn = btn;
+  btn.dataset.playing = '1';
+  btn.textContent = '⏸ Pause';
+  setSkipButtonsEnabled(true);
+  speechSynthesis.speak(utterance);
+}
+
+function skipSeconds(deltaSeconds) {
+  if (!activeBtn || !ttsWords.length) return;
+  const wordDelta = Math.max(1, Math.round(estimateWordsPerSecond() * Math.abs(deltaSeconds)));
+  const target = Math.max(0, Math.min(ttsWordIndex + (deltaSeconds < 0 ? -wordDelta : wordDelta), ttsWords.length - 1));
+  speakFromWord(activeBtn, target, ttsOnEnd);
+}
+
+function setSkipButtonsEnabled(enabled) {
+  const back = document.getElementById('tts-skip-back');
+  const fwd  = document.getElementById('tts-skip-forward');
+  if (back) back.disabled = !enabled;
+  if (fwd)  fwd.disabled  = !enabled;
 }
 
 function speakText(btn, text, onEnd) {
@@ -119,41 +205,8 @@ function speakText(btn, text, onEnd) {
   }
 
   stopAudio();
-  const panel = showReadingPanel(text);
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = playbackSpeed;
-
-  const lang = state.language === 'spanish' ? 'es-MX' : 'en-US';
-  utterance.lang = lang;
-  const voice = pickVoice(lang);
-  if (voice) utterance.voice = voice;
-
-  utterance.onboundary = e => {
-    if (e.name === 'word') highlightWord(panel, e.charIndex);
-  };
-
-  utterance.onend = () => {
-    panel.remove();
-    btn.disabled = false;
-    btn.dataset.playing = '';
-    btn.textContent = btn.dataset.label;
-    activeBtn = null;
-    if (onEnd) onEnd(false);
-  };
-
-  utterance.onerror = () => {
-    panel.remove();
-    btn.disabled = false;
-    btn.dataset.playing = '';
-    btn.textContent = btn.dataset.label;
-    activeBtn = null;
-    if (onEnd) onEnd(true);
-  };
-
-  activeBtn = btn;
-  btn.dataset.playing = '1';
-  btn.textContent = '⏸ Pause';
-  speechSynthesis.speak(utterance);
+  ttsWords = text.trim().split(/\s+/);
+  speakFromWord(btn, 0, onEnd);
 }
 
 // Spanish read-aloud goes through the backend (ElevenLabs) instead of the
@@ -266,6 +319,22 @@ function addTTSBar(explanationText) {
     }
   };
 
+  const btnSkipBack = document.createElement('button');
+  btnSkipBack.className = 'tts-btn tts-skip-btn';
+  btnSkipBack.id = 'tts-skip-back';
+  btnSkipBack.textContent = '⏪ 15s';
+  btnSkipBack.disabled = true;
+  btnSkipBack.title = 'Go back 15 seconds';
+  btnSkipBack.onclick = () => skipSeconds(-15);
+
+  const btnSkipForward = document.createElement('button');
+  btnSkipForward.className = 'tts-btn tts-skip-btn';
+  btnSkipForward.id = 'tts-skip-forward';
+  btnSkipForward.textContent = '15s ⏩';
+  btnSkipForward.disabled = true;
+  btnSkipForward.title = 'Skip ahead 15 seconds';
+  btnSkipForward.onclick = () => skipSeconds(15);
+
   const speedControl = document.createElement('div');
   speedControl.className = 'speed-control';
 
@@ -291,6 +360,8 @@ function addTTSBar(explanationText) {
 
   bar.appendChild(btnExp);
   bar.appendChild(btnPage);
+  bar.appendChild(btnSkipBack);
+  bar.appendChild(btnSkipForward);
   bar.appendChild(speedControl);
   output.appendChild(bar);
 
