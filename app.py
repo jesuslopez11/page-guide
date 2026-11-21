@@ -503,6 +503,19 @@ Write in flowing paragraphs. No headers. No bullet points. No bold labels. No "B
 Open by grounding them in the bigger story using the book overview and summary — what's been building, and where does this page fit? Let the flow from the previous page come through naturally. Walk through every idea on this page in order: say what's happening plainly, explain why the author put it here, remind them who characters and concepts are as they come up, connect each idea to the one before it. Tie this page to the overall arc somewhere in there. End by telling them exactly where the page left off and what's about to happen next — make them want to turn the page.
 
 Warm, thorough, and conversational throughout.""",
+
+    "narrate": """\
+You're narrating this page like an immersive audiobook performance, not explaining it. The reader should feel like they're physically in the scene as it unfolds — not like someone is summarizing it to them from the outside.
+
+You're given context about the book, a running story summary (if available), a glossary of invented names/terms/concepts defined so far (if available), the previous page (if available), and the current page.
+
+Important: pages are physical PDF pages, so they often cut off mid-sentence or mid-scene. When that happens, let the narration trail into it naturally — like a scene fading right as the tension peaks — instead of announcing that the page ended.
+
+Write it as vivid, atmospheric narration: full scenes, sensory detail, characters' internal thoughts made explicit, dialogue delivered with real weight and feeling. No headers, no bullet points, no meta-commentary about "this page" or "what's happening here" — just narrate the story itself, in the moment, like you're reading it aloud with real feeling.
+
+If an invented name, place, or idea from the glossary resurfaces, let the narration itself carry a brief, natural reminder of what it means, woven into the scene — never as a separate aside.
+
+Let the narration run at whatever length the scene actually needs — don't pad it, and don't cut it short either. Dramatic, alive, and vivid throughout.""",
 }
 
 SHORT_MODE_WORDS_PER_PAGE = 150  # matches the "Under 150 words" cap written into PROMPTS["short"]
@@ -767,7 +780,20 @@ async def explain(req: ExplainRequest, request: Request):
 
     user_msg = "\n\n".join(parts)
 
-    model = "claude-sonnet-4-6" if mode == "long" else "claude-haiku-4-5-20251001"
+    # Narrate leans on Sonnet too, like Long — dramatic, sensory prose benefits
+    # from the stronger model, and Sonnet's much higher output ceiling leaves
+    # plenty of headroom for a mode that has no fixed word-count instruction.
+    model = "claude-sonnet-4-6" if mode in ("long", "narrate") else "claude-haiku-4-5-20251001"
+
+    # How much Claude is *allowed* to write back is a separate, hard ceiling
+    # from any word-count instruction in the prompt — hitting it cuts the
+    # reply off mid-sentence with no warning. Scale it up with how many pages
+    # are being covered in one go, capped well inside each model's own real
+    # output limit so this never turns into a request error instead.
+    if model == "claude-sonnet-4-6":
+        max_output_tokens = min(6000 * len(group), 32000)
+    else:
+        max_output_tokens = min(max(4000, 2500 * len(group)), 8000)
 
     # Build message content — comic pages use vision, text pages use plain text
     if is_comic:
@@ -796,9 +822,10 @@ async def explain(req: ExplainRequest, request: Request):
 
     async def generate():
         try:
+            disconnected = False
             async with async_client.messages.stream(
                 model=model,
-                max_tokens=4000,
+                max_tokens=max_output_tokens,
                 system=system_prompt,
                 messages=[{"role": "user", "content": message_content}],
                 timeout=120.0,
@@ -810,8 +837,21 @@ async def explain(req: ExplainRequest, request: Request):
                     # this is what was piling up under rapid navigation and
                     # starving out new requests on a resource-limited instance.
                     if await request.is_disconnected():
+                        disconnected = True
                         break
                     yield f"data: {json.dumps({'text': text})}\n\n"
+
+                # Even with the scaled-up ceiling above, say so plainly if a
+                # reply still ran out of room, instead of silently ending
+                # mid-sentence and leaving the reader to wonder what happened.
+                if not disconnected:
+                    final = await stream.get_final_message()
+                    if final.stop_reason == "max_tokens":
+                        note = (
+                            "\n\n_(This ran longer than expected and got cut off here — "
+                            "try fewer pages at a time, or tap re-explain to try again.)_"
+                        )
+                        yield f"data: {json.dumps({'text': note})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
