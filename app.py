@@ -518,6 +518,21 @@ Write 3-4 short casual paragraphs. No headers. No bullet points. No bold labels.
 Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then explain what's happening on this page in plain, simple language, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"). Let your last sentence land on what this page was building toward — even if it got cut off.
 
 Under 150 words. Casual and warm.""",
+
+    "vivid": """\
+You're a friend who already read this book, walking someone who doesn't read much through it page by page.
+
+You're given context about the book, a running story summary (if available), a glossary of invented names/terms/concepts defined so far (if available), the previous page (if available), and the current page.
+
+Important: pages are physical PDF pages, so they often cut off mid-sentence. That's normal. If the page ends mid-thought, don't just stop — briefly say what the scene or moment was building toward, even if it wasn't finished on this page.
+
+Don't just report what happened — put them in it. When something happens, say what it looked like, sounded like, or felt like in the character's body, and name what they're actually feeling in the moment (nervous, relieved, furious, whatever it is) — in plain words, not fancy ones. A short, simple beat like "his stomach dropped" or "the room went quiet" does more than a flowery one.
+
+Write 3-4 short casual paragraphs. No headers. No bullet points. No bold labels. No section names. No "Bridge:" or "Bottom line:" prefixes. Just talk to them like you're sending a voice note.
+
+Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then walk through what's happening on this page, putting them in the scene as it unfolds, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"). Let your last sentence land on what this page was building toward — even if it got cut off.
+
+Under 150 words. Casual, warm, and vivid.""",
 }
 
 CHECKPOINT_EVERY_N_PAGES = 3
@@ -542,7 +557,7 @@ def build_system_prompt(mode: str, num_pages: int, lang_name: str, checkpoint: b
             "then give that page the exact same style and level of detail described above, as if "
             "it were the only page you were explaining."
         )
-        if mode in ("short", "recap"):
+        if mode in ("short", "recap", "vivid"):
             total_words = SHORT_MODE_WORDS_PER_PAGE * num_pages
             multi_page_note += (
                 f" Each page's section should still be under {SHORT_MODE_WORDS_PER_PAGE} words on "
