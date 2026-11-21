@@ -504,24 +504,26 @@ Open by grounding them in the bigger story using the book overview and summary �
 
 Warm, thorough, and conversational throughout.""",
 
-    "narrate": """\
-You're narrating this page like an immersive audiobook performance, not explaining it. The reader should feel like they're physically in the scene as it unfolds — not like someone is summarizing it to them from the outside.
+    "recap": """\
+You're a friend who already read this book, walking someone who doesn't read much through it page by page.
 
 You're given context about the book, a running story summary (if available), a glossary of invented names/terms/concepts defined so far (if available), the previous page (if available), and the current page.
 
-Important: pages are physical PDF pages, so they often cut off mid-sentence or mid-scene. When that happens, let the narration trail into it naturally — like a scene fading right as the tension peaks — instead of announcing that the page ended.
+Important: pages are physical PDF pages, so they often cut off mid-sentence. That's normal. If the page ends mid-thought, don't just stop — briefly say what the scene or moment was building toward, even if it wasn't finished on this page.
 
-Write it as vivid, atmospheric narration: full scenes, sensory detail, characters' internal thoughts made explicit, dialogue delivered with real weight and feeling. No headers, no bullet points, no meta-commentary about "this page" or "what's happening here" — just narrate the story itself, in the moment, like you're reading it aloud with real feeling.
+Write 3-4 short casual paragraphs. No headers. No bullet points. No bold labels. No section names. No "Bridge:" or "Bottom line:" prefixes. Just talk to them like you're sending a voice note.
 
-If an invented name, place, or idea from the glossary resurfaces, let the narration itself carry a brief, natural reminder of what it means, woven into the scene — never as a separate aside.
+Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then explain what's happening on this page in plain, simple language, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"). Let your last sentence land on what this page was building toward — even if it got cut off.
 
-Let the narration run at whatever length the scene actually needs — don't pad it, and don't cut it short either. Dramatic, alive, and vivid throughout.""",
+Under 150 words. Casual and warm.""",
 }
+
+CHECKPOINT_EVERY_N_PAGES = 3
 
 SHORT_MODE_WORDS_PER_PAGE = 150  # matches the "Under 150 words" cap written into PROMPTS["short"]
 
 
-def build_system_prompt(mode: str, num_pages: int, lang_name: str) -> str:
+def build_system_prompt(mode: str, num_pages: int, lang_name: str, checkpoint: bool = False) -> str:
     """The base PROMPTS text is written for exactly one page. For a single
     page (the normal case) it's used unchanged. When several pages are
     being explained in one go, append instructions telling Claude to give
@@ -538,7 +540,7 @@ def build_system_prompt(mode: str, num_pages: int, lang_name: str) -> str:
             "then give that page the exact same style and level of detail described above, as if "
             "it were the only page you were explaining."
         )
-        if mode == "short":
+        if mode in ("short", "recap"):
             total_words = SHORT_MODE_WORDS_PER_PAGE * num_pages
             multi_page_note += (
                 f" Each page's section should still be under {SHORT_MODE_WORDS_PER_PAGE} words on "
@@ -546,6 +548,15 @@ def build_system_prompt(mode: str, num_pages: int, lang_name: str) -> str:
                 "squeezed-down summary."
             )
         base += multi_page_note
+    if mode == "recap" and checkpoint:
+        base += (
+            f"\n\nThis is a checkpoint page — every {CHECKPOINT_EVERY_N_PAGES} pages, the reader gets "
+            "a quick catch-up so a long book doesn't lose them. Before walking through this page, start "
+            "with a short 2-3 sentence recap of what's happened over the last few pages, in the same "
+            "plain casual language as everything else. Keep it clearly separate from the walkthrough "
+            "that follows — a line break is enough, no header or label — then continue into the normal "
+            "page walkthrough exactly as described above."
+        )
     return base + f"\n\nWrite your entire response in {lang_name}, regardless of what language the page itself is written in."
 
 
@@ -750,7 +761,12 @@ async def explain(req: ExplainRequest, request: Request):
 
     mode = req.mode if req.mode in PROMPTS else "medium"
     lang_name = LANGUAGE_NAMES[normalize_language(req.language)]
-    system_prompt = build_system_prompt(mode, len(group), lang_name)
+    # Recap mode gets a quick catch-up every few pages so a long book doesn't
+    # lose the reader — based on this group's last page, so it fires on the
+    # same physical pages regardless of how many are bundled per request.
+    last_index = req.page_indices[-1]
+    checkpoint = (last_index + 1) % CHECKPOINT_EVERY_N_PAGES == 0
+    system_prompt = build_system_prompt(mode, len(group), lang_name, checkpoint)
 
     # Build context: book overview → rolling summary → glossary → previous page → current page(s)
     parts = []
@@ -780,10 +796,7 @@ async def explain(req: ExplainRequest, request: Request):
 
     user_msg = "\n\n".join(parts)
 
-    # Narrate leans on Sonnet too, like Long — dramatic, sensory prose benefits
-    # from the stronger model, and Sonnet's much higher output ceiling leaves
-    # plenty of headroom for a mode that has no fixed word-count instruction.
-    model = "claude-sonnet-4-6" if mode in ("long", "narrate") else "claude-haiku-4-5-20251001"
+    model = "claude-sonnet-4-6" if mode == "long" else "claude-haiku-4-5-20251001"
 
     # How much Claude is *allowed* to write back is a separate, hard ceiling
     # from any word-count instruction in the prompt — hitting it cuts the
