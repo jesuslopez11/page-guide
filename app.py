@@ -526,18 +526,27 @@ You're given context about the book, a running story summary (if available), a g
 
 Important: pages are physical PDF pages, so they often cut off mid-sentence. That's normal. If the page ends mid-thought, don't just stop — briefly say what the scene or moment was building toward, even if it wasn't finished on this page.
 
-Don't just report what happened — put them in it. When something happens, say what it looked like, sounded like, or felt like in the character's body, and name what they're actually feeling in the moment (nervous, relieved, furious, whatever it is) — in plain words, not fancy ones. A short, simple beat like "his stomach dropped" or "the room went quiet" does more than a flowery one.
+If this page branches away from the main story — a flashback, a memory, a story a character is telling, a different time or place, a side conversation — briefly flag it when it starts ("quick detour — this is...") and clearly flag when we're back on the main thread ("okay, back to [whoever]..."). Don't skip or shorten what happens in the detour — explain it with the same care as the main story, just make it clear it's a branch so it doesn't get confused for the main plot.
 
-Write 3-4 short casual paragraphs. No headers. No bullet points. No bold labels. No section names. No "Bridge:" or "Bottom line:" prefixes. Just talk to them like you're sending a voice note.
+Don't just report what happened — put them in it. When something happens, say what it looked like, sounded like, or felt like in the character's body, and name what they're actually feeling in the moment (nervous, relieved, furious, whatever it is) — in plain words, not fancy ones. A short, simple beat like "his stomach dropped" or "the room went quiet" does more than a flowery one. But the vivid detail is never allowed to crowd out the plain connective explanation — why this is happening, how it connects to what came before, what it means for where the story's headed. Both have to be there; don't trade one for the other.
 
-Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then walk through what's happening on this page, putting them in the scene as it unfolds, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"). Let your last sentence land on what this page was building toward — even if it got cut off.
+Write a handful of short casual paragraphs. No headers. No bullet points. No bold labels. No section names. No "Bridge:" or "Bottom line:" prefixes. Just talk to them like you're sending a voice note.
 
-Under 150 words. Casual, warm, and vivid.""",
+Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then walk through what's happening on this page, putting them in the scene as it unfolds, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"), and connecting each idea to the one before it so nothing feels like it came out of nowhere. Let your last sentence land on what this page was building toward — even if it got cut off.
+
+Under 250 words. Casual, warm, vivid, and easy to follow.""",
 }
 
 CHECKPOINT_EVERY_N_PAGES = 3
 
-SHORT_MODE_WORDS_PER_PAGE = 150  # matches the "Under 150 words" cap written into PROMPTS["short"]
+# Each mode with a fixed word cap, matching the "Under N words" line written
+# into its own PROMPTS text — Vivid's is higher than Short/Recap's on purpose,
+# so its added sensory/emotional detail gets its own room instead of crowding
+# out the plain connective explanation out of the same tight budget.
+WORDS_PER_PAGE = {"short": 150, "recap": 150, "vivid": 250}
+
+# Modes that get the every-Nth-page catch-up recap.
+CHECKPOINT_MODES = ("recap", "vivid")
 
 
 def build_system_prompt(mode: str, num_pages: int, lang_name: str, checkpoint: bool = False) -> str:
@@ -557,15 +566,16 @@ def build_system_prompt(mode: str, num_pages: int, lang_name: str, checkpoint: b
             "then give that page the exact same style and level of detail described above, as if "
             "it were the only page you were explaining."
         )
-        if mode in ("short", "recap", "vivid"):
-            total_words = SHORT_MODE_WORDS_PER_PAGE * num_pages
+        if mode in WORDS_PER_PAGE:
+            words_per_page = WORDS_PER_PAGE[mode]
+            total_words = words_per_page * num_pages
             multi_page_note += (
-                f" Each page's section should still be under {SHORT_MODE_WORDS_PER_PAGE} words on "
+                f" Each page's section should still be under {words_per_page} words on "
                 f"its own, same as if it were alone — so roughly {total_words} words total, not one "
                 "squeezed-down summary."
             )
         base += multi_page_note
-    if mode == "recap" and checkpoint:
+    if mode in CHECKPOINT_MODES and checkpoint:
         base += (
             f"\n\nThis is a checkpoint page — every {CHECKPOINT_EVERY_N_PAGES} pages, the reader gets "
             "a quick catch-up so a long book doesn't lose them. Before walking through this page, start "
