@@ -19,7 +19,7 @@ const state = {
   overview:      '',   // generated once on upload — what this book is about
   currentIndex:  0,
   pagesPerStep:  loadPagesPerStepPref(),   // how many pages get bundled into one explanation
-  mode:          'short',
+  mode:          'recap',
   language:      'english',
   cache:         {},   // `${index}-${mode}-${language}` => markdown string
   summaryCache:  {},   // pageIndex => summary after reading that page
