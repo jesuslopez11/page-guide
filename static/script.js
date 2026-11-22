@@ -202,11 +202,22 @@ function skipSeconds(deltaSeconds) {
   speakFromWord(activeBtn, target, ttsOnEnd);
 }
 
+// "Got distracted, missed that" button — restarts the current page(s) from
+// the very beginning, then carries on exactly as before: if auto-play was
+// chaining to the next page afterward, it still will, since this reuses
+// whatever onEnd callback was already wired up rather than replacing it.
+function repeatCurrent() {
+  if (!activeBtn || !ttsWords.length) return;
+  speakFromWord(activeBtn, 0, ttsOnEnd);
+}
+
 function setSkipButtonsEnabled(enabled) {
-  const back = document.getElementById('tts-skip-back');
-  const fwd  = document.getElementById('tts-skip-forward');
-  if (back) back.disabled = !enabled;
-  if (fwd)  fwd.disabled  = !enabled;
+  const back   = document.getElementById('tts-skip-back');
+  const fwd    = document.getElementById('tts-skip-forward');
+  const repeat = document.getElementById('tts-repeat');
+  if (back)   back.disabled   = !enabled;
+  if (fwd)    fwd.disabled    = !enabled;
+  if (repeat) repeat.disabled = !enabled;
 }
 
 function speakText(btn, text, onEnd) {
@@ -352,6 +363,14 @@ function addTTSBar(explanationText) {
   btnSkipForward.title = 'Skip ahead 15 seconds';
   btnSkipForward.onclick = () => skipSeconds(15);
 
+  const btnRepeat = document.createElement('button');
+  btnRepeat.className = 'tts-btn tts-skip-btn';
+  btnRepeat.id = 'tts-repeat';
+  btnRepeat.textContent = '🔂 Repeat';
+  btnRepeat.disabled = true;
+  btnRepeat.title = 'Missed that — read this page again from the start, then continue as normal';
+  btnRepeat.onclick = () => repeatCurrent();
+
   const speedControl = document.createElement('div');
   speedControl.className = 'speed-control';
 
@@ -379,6 +398,7 @@ function addTTSBar(explanationText) {
   bar.appendChild(btnPage);
   bar.appendChild(btnSkipBack);
   bar.appendChild(btnSkipForward);
+  bar.appendChild(btnRepeat);
   bar.appendChild(speedControl);
   output.appendChild(bar);
 
