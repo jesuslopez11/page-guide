@@ -926,8 +926,22 @@ async function loadPage(index, forceRefresh) {
     if (!isCurrent()) return;
 
     if (!res.ok) {
-      const err = await res.json();
-      output.innerHTML = `<div class="error-box">${err.detail || 'Something went wrong.'}</div>`;
+      // err.detail is usually a plain string (our own error messages), but
+      // FastAPI's automatic validation errors send it as a list of objects
+      // instead — rendering that directly used to print a useless literal
+      // "[object Object]" with zero information in it.
+      let message = 'Something went wrong.';
+      try {
+        const err = await res.json();
+        if (typeof err.detail === 'string' && err.detail) {
+          message = err.detail;
+        } else if (Array.isArray(err.detail) && err.detail.length) {
+          message = err.detail.map(d => (d && d.msg) || JSON.stringify(d)).join('; ');
+        } else if (err.detail) {
+          message = JSON.stringify(err.detail);
+        }
+      } catch { /* response wasn't JSON at all — keep the generic message */ }
+      output.innerHTML = `<div class="error-box">${message} (status ${res.status})</div>`;
       if (state.autoPlay) advanceAutoPlay(); // don't silently stall on an unreadable page
       return;
     }
