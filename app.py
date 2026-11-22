@@ -87,6 +87,13 @@ def ensure_progress_table():
             cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS file_bytes BYTEA")
             cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS original_url TEXT")
             cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT FALSE")
+            # Caching these means reopening a saved book from the library
+            # skips both of the slow Claude calls entirely instead of
+            # redoing them from scratch every time — NULL means "not
+            # computed yet," distinct from an empty list (computed, this
+            # book just has no front-matter pages to skip).
+            cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS overview TEXT")
+            cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS skip_indices JSONB")
     except Exception:
         pass
     finally:
@@ -103,9 +110,12 @@ MAX_LIBRARY_FILE_BYTES = 25 * 1024 * 1024
 
 
 def save_file_to_library(content_hash: str, title: str, filename: str | None,
-                          suffix: str | None, file_bytes: bytes | None, original_url: str | None) -> bool:
+                          suffix: str | None, file_bytes: bytes | None, original_url: str | None,
+                          overview: str | None = None, skip_indices: list | None = None) -> bool:
     """Best-effort, like save_progress — never blocks or breaks the upload
-    itself if the database is unavailable or the file's too large."""
+    itself if the database is unavailable or the file's too large. Caching
+    the overview and skip-indices here means reopening this book from the
+    library later skips both of the slow Claude calls entirely."""
     if file_bytes is not None and len(file_bytes) > MAX_LIBRARY_FILE_BYTES:
         return False
     conn = get_db_connection()
@@ -114,12 +124,17 @@ def save_file_to_library(content_hash: str, title: str, filename: str | None,
     try:
         with conn, conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO reading_progress (content_hash, title, filename, suffix, file_bytes, original_url, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, now())
+                INSERT INTO reading_progress
+                    (content_hash, title, filename, suffix, file_bytes, original_url, overview, skip_indices, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
                 ON CONFLICT (content_hash) DO UPDATE
                 SET title = EXCLUDED.title, filename = EXCLUDED.filename, suffix = EXCLUDED.suffix,
-                    file_bytes = EXCLUDED.file_bytes, original_url = EXCLUDED.original_url, updated_at = now()
-            """, (content_hash, title, filename, suffix, file_bytes, original_url))
+                    file_bytes = EXCLUDED.file_bytes, original_url = EXCLUDED.original_url,
+                    overview = EXCLUDED.overview, skip_indices = EXCLUDED.skip_indices, updated_at = now()
+            """, (
+                content_hash, title, filename, suffix, file_bytes, original_url,
+                overview, json.dumps(skip_indices) if skip_indices is not None else None,
+            ))
         return True
     except Exception:
         return False
@@ -166,7 +181,7 @@ def load_library_file(content_hash: str):
     try:
         with conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT title, filename, suffix, file_bytes, original_url "
+                "SELECT title, filename, suffix, file_bytes, original_url, overview, skip_indices "
                 "FROM reading_progress WHERE content_hash = %s",
                 (content_hash,),
             )
@@ -177,6 +192,8 @@ def load_library_file(content_hash: str):
                 "title": row[0], "filename": row[1], "suffix": row[2],
                 "file_bytes": bytes(row[3]) if row[3] is not None else None,
                 "original_url": row[4],
+                "overview": row[5],
+                "skip_indices": row[6],  # already a parsed list (JSONB) — None means "not cached yet"
             }
     except Exception:
         return None
@@ -722,10 +739,18 @@ def build_system_prompt(mode: str, num_pages: int, lang_name: str, checkpoint: b
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-async def build_content_from_bytes(raw: bytes, suffix: str, title: str, language: str) -> tuple[dict, str]:
+async def build_content_from_bytes(
+    raw: bytes, suffix: str, title: str, language: str,
+    cached_overview: str | None = None, cached_skip_indices: list | None = None,
+) -> tuple[dict, str, str, list]:
     """Shared by /upload (a fresh file) and /library/open (reopening a
     previously saved one) — turns raw file bytes into the same response
-    shape the frontend expects either way. Returns (response, content_hash)."""
+    shape the frontend expects either way. When cached_overview /
+    cached_skip_indices are given (a book reopened from the library that's
+    been opened before), both of the slow Claude calls are skipped entirely
+    in favor of the already-known answer. Returns (response, content_hash,
+    overview, skip_indices) — the latter two so a fresh computation gets
+    cached by the caller for next time."""
     if suffix == ".pdf":
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(raw)
@@ -756,12 +781,17 @@ async def build_content_from_bytes(raw: bytes, suffix: str, title: str, language
 
     is_comic = suffix in {".cbr", ".cbz"}
 
-    try:
-        overview = await asyncio.to_thread(generate_book_overview, pages, language)
-    except Exception:
-        overview = ""
+    if cached_overview is not None:
+        overview = cached_overview
+    else:
+        try:
+            overview = await asyncio.to_thread(generate_book_overview, pages, language)
+        except Exception:
+            overview = ""
 
-    if is_comic:
+    if cached_skip_indices is not None:
+        skip_indices = set(cached_skip_indices)
+    elif is_comic:
         skip_indices = set()
     else:
         try:
@@ -802,7 +832,7 @@ async def build_content_from_bytes(raw: bytes, suffix: str, title: str, language
             for p in pages
         ],
     }
-    return response, content_hash
+    return response, content_hash, overview, sorted(skip_indices)
 
 
 @app.post("/upload")
@@ -812,8 +842,10 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
         raise HTTPException(400, f"Unsupported type '{suffix}'. Upload PDF, TXT, MD, CBR, or CBZ.")
 
     raw = await file.read()
-    response, content_hash = await build_content_from_bytes(raw, suffix, file.filename, language)
-    await asyncio.to_thread(save_file_to_library, content_hash, file.filename, file.filename, suffix, raw, None)
+    response, content_hash, overview, skip_indices = await build_content_from_bytes(raw, suffix, file.filename, language)
+    await asyncio.to_thread(
+        save_file_to_library, content_hash, file.filename, file.filename, suffix, raw, None, overview, skip_indices
+    )
     return response
 
 
@@ -822,12 +854,16 @@ class UrlUploadRequest(BaseModel):
     language: str = "english"
 
 
-async def build_content_from_url(url: str, language: str) -> tuple[dict, str, bytes | None]:
+async def build_content_from_url(
+    url: str, language: str,
+    cached_overview: str | None = None, cached_skip_indices: list | None = None,
+) -> tuple[dict, str, bytes | None, str, list]:
     """Shared by /upload-url and /library/open — fetches and processes a web
-    link into the same response shape the frontend expects either way.
-    Returns (response, content_hash, pdf_bytes) — pdf_bytes is only non-None
-    for a direct PDF link, since a plain article is re-fetched from the URL
-    rather than stored."""
+    link into the same response shape the frontend expects either way. The
+    page itself always gets re-fetched (a plain article isn't stored), but
+    cached_overview / cached_skip_indices still skip both slow Claude calls
+    when this link was opened before. Returns (response, content_hash,
+    pdf_bytes, overview, skip_indices)."""
     try:
         content = await asyncio.to_thread(fetch_url_content, url)
     except ValueError as e:
@@ -839,15 +875,21 @@ async def build_content_from_url(url: str, language: str) -> tuple[dict, str, by
     if not pages:
         raise HTTPException(400, "No readable content found at that link.")
 
-    try:
-        overview = await asyncio.to_thread(generate_book_overview, pages, language)
-    except Exception:
-        overview = ""
+    if cached_overview is not None:
+        overview = cached_overview
+    else:
+        try:
+            overview = await asyncio.to_thread(generate_book_overview, pages, language)
+        except Exception:
+            overview = ""
 
-    try:
-        skip_indices = await asyncio.to_thread(classify_front_matter, pages)
-    except Exception:
-        skip_indices = set()
+    if cached_skip_indices is not None:
+        skip_indices = set(cached_skip_indices)
+    else:
+        try:
+            skip_indices = await asyncio.to_thread(classify_front_matter, pages)
+        except Exception:
+            skip_indices = set()
     for p in pages:
         p["skip"] = p["index"] in skip_indices
 
@@ -884,7 +926,7 @@ async def build_content_from_url(url: str, language: str) -> tuple[dict, str, by
             for p in pages
         ],
     }
-    return response, content_hash, content["pdf_bytes"]
+    return response, content_hash, content["pdf_bytes"], overview, sorted(skip_indices)
 
 
 @app.post("/upload-url")
@@ -898,9 +940,10 @@ async def upload_url(req: UrlUploadRequest):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    response, content_hash, pdf_bytes = await build_content_from_url(url, req.language)
+    response, content_hash, pdf_bytes, overview, skip_indices = await build_content_from_url(url, req.language)
     await asyncio.to_thread(
-        save_file_to_library, content_hash, response["title"], None, ".pdf" if pdf_bytes else None, pdf_bytes, url
+        save_file_to_library, content_hash, response["title"], None, ".pdf" if pdf_bytes else None, pdf_bytes, url,
+        overview, skip_indices
     )
     return response
 
@@ -929,12 +972,16 @@ async def open_from_library(req: LibraryOpenRequest):
 
     if record["file_bytes"] is not None:
         title = record["filename"] or record["title"] or "Untitled"
-        response, _ = await build_content_from_bytes(
-            record["file_bytes"], record["suffix"] or ".txt", title, req.language
+        response, _, _, _ = await build_content_from_bytes(
+            record["file_bytes"], record["suffix"] or ".txt", title, req.language,
+            cached_overview=record["overview"], cached_skip_indices=record["skip_indices"],
         )
         return response
     if record["original_url"]:
-        response, _, _ = await build_content_from_url(record["original_url"], req.language)
+        response, _, _, _, _ = await build_content_from_url(
+            record["original_url"], req.language,
+            cached_overview=record["overview"], cached_skip_indices=record["skip_indices"],
+        )
         return response
     raise HTTPException(404, "Nothing saved for this book — try uploading it again.")
 
