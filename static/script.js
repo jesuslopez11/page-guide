@@ -648,7 +648,10 @@ depthBtns.forEach(btn => {
     depthBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     state.mode = btn.dataset.mode;
-    loadPage(state.currentIndex, true);
+    // Without a book loaded there's nothing to (re)explain yet — switching
+    // depth before uploading anything used to still fire the request with
+    // content_id: null, which the server correctly rejects as invalid.
+    if (state.contentId) loadPage(state.currentIndex, true);
   });
 });
 
@@ -936,7 +939,11 @@ async function loadPage(index, forceRefresh) {
         if (typeof err.detail === 'string' && err.detail) {
           message = err.detail;
         } else if (Array.isArray(err.detail) && err.detail.length) {
-          message = err.detail.map(d => (d && d.msg) || JSON.stringify(d)).join('; ');
+          message = err.detail.map(d => {
+            if (!d) return JSON.stringify(d);
+            const field = Array.isArray(d.loc) ? d.loc.slice(1).join('.') : '';
+            return (field ? `${field}: ` : '') + (d.msg || JSON.stringify(d));
+          }).join('; ');
         } else if (err.detail) {
           message = JSON.stringify(err.detail);
         }
