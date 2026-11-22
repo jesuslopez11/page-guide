@@ -513,8 +513,6 @@ Important: pages are physical PDF pages, so they often cut off mid-sentence. Tha
 
 If this page branches away from the main story — a flashback, a memory, a story a character is telling, a different time or place, a side conversation — briefly flag it when it starts ("quick detour — this is...") and clearly flag when we're back on the main thread ("okay, back to [whoever]..."). Don't skip or shorten what happens in the detour — explain it with the same care as the main story, just make it clear it's a branch so it doesn't get confused for the main plot.
 
-Some books alternate scenes between different characters' perspectives — one character's storyline, then a different character's, then back again — sometimes more than once on the same page. Whenever that shift happens, say so plainly when it happens ("switching over to [character] now" or "back to [character]'s side of things") so it's always clear whose eyes we're currently seeing events through, the same way you'd flag a flashback.
-
 Write 3-4 short casual paragraphs. No headers. No bullet points. No bold labels. No section names. No "Bridge:" or "Bottom line:" prefixes. Just talk to them like you're sending a voice note.
 
 Use the book overview and story summary to open with one grounding sentence — where are we in the story right now? Then explain what's happening on this page in plain, simple language, slipping in character reminders naturally as they come up ("Paul, the main character" or "Jessica, his mom"). Let your last sentence land on what this page was building toward — even if it got cut off.
