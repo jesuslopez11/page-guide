@@ -4,6 +4,7 @@ import uuid
 import tempfile
 import asyncio
 import hashlib
+from collections import OrderedDict
 
 import anthropic
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
@@ -37,7 +38,20 @@ client = anthropic.Anthropic()
 # it can be cancelled the moment the client disconnects instead of running to
 # completion regardless — see the disconnect check inside generate() below.
 async_client = anthropic.AsyncAnthropic()
-content_store: dict = {}
+content_store: "OrderedDict[str, dict]" = OrderedDict()
+# Each upload/reopen keeps a full copy of the book's extracted text (and raw
+# file bytes) in memory under a fresh content_id, with nothing ever removing
+# old ones — on a small Render instance that silently grows until the process
+# gets killed for using too much memory. Capping how many books we keep
+# around at once, and dropping the oldest first, bounds memory no matter how
+# many times a book gets opened or reopened in a day.
+MAX_CONTENT_STORE_ENTRIES = 6
+
+
+def remember_content(content_id: str, data: dict) -> None:
+    content_store[content_id] = data
+    while len(content_store) > MAX_CONTENT_STORE_ENTRIES:
+        content_store.popitem(last=False)
 
 
 # ── Reading progress (cross-device "resume where I left off") ──────────────────
@@ -804,7 +818,7 @@ async def build_content_from_bytes(
     content_id = str(uuid.uuid4())
     content_hash = hashlib.sha256(raw).hexdigest()
     saved = await asyncio.to_thread(get_saved_progress, content_hash)
-    content_store[content_id] = {
+    remember_content(content_id, {
         "title": title,
         "pages": pages,
         "overview": overview,
@@ -812,7 +826,7 @@ async def build_content_from_bytes(
         "raw_text": raw.decode("utf-8", errors="ignore") if suffix in {".txt", ".md"} else None,
         "original_url": None,
         "content_hash": content_hash,
-    }
+    })
 
     has_page_images = is_comic or suffix == ".pdf"
     response = {
@@ -899,7 +913,7 @@ async def build_content_from_url(
         content["pdf_bytes"] if is_pdf_link else url.encode()
     ).hexdigest()
     saved = await asyncio.to_thread(get_saved_progress, content_hash)
-    content_store[content_id] = {
+    remember_content(content_id, {
         "title": title,
         "pages": pages,
         "overview": overview,
@@ -907,7 +921,7 @@ async def build_content_from_url(
         "raw_text": None,
         "original_url": url,
         "content_hash": content_hash,
-    }
+    })
 
     response = {
         "content_id": content_id,
