@@ -350,7 +350,8 @@ function addTTSBar(explanationText) {
   const btnSkipBack = document.createElement('button');
   btnSkipBack.className = 'tts-btn tts-skip-btn';
   btnSkipBack.id = 'tts-skip-back';
-  btnSkipBack.textContent = '⏪ 15s';
+  btnSkipBack.dataset.label = '⏪ 15s';
+  btnSkipBack.textContent = btnSkipBack.dataset.label;
   btnSkipBack.disabled = true;
   btnSkipBack.title = 'Go back 15 seconds';
   btnSkipBack.onclick = () => skipSeconds(-15);
@@ -358,7 +359,8 @@ function addTTSBar(explanationText) {
   const btnSkipForward = document.createElement('button');
   btnSkipForward.className = 'tts-btn tts-skip-btn';
   btnSkipForward.id = 'tts-skip-forward';
-  btnSkipForward.textContent = '15s ⏩';
+  btnSkipForward.dataset.label = '15s ⏩';
+  btnSkipForward.textContent = btnSkipForward.dataset.label;
   btnSkipForward.disabled = true;
   btnSkipForward.title = 'Skip ahead 15 seconds';
   btnSkipForward.onclick = () => skipSeconds(15);
@@ -366,7 +368,8 @@ function addTTSBar(explanationText) {
   const btnRepeat = document.createElement('button');
   btnRepeat.className = 'tts-btn tts-skip-btn';
   btnRepeat.id = 'tts-repeat';
-  btnRepeat.textContent = '🔂 Repeat';
+  btnRepeat.dataset.label = '🔁 Repeat';
+  btnRepeat.textContent = btnRepeat.dataset.label;
   btnRepeat.disabled = true;
   btnRepeat.title = 'Missed that — read this page again from the start, then continue as normal';
   btnRepeat.onclick = () => repeatCurrent();
