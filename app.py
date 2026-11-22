@@ -75,6 +75,18 @@ def ensure_progress_table():
                 ALTER TABLE reading_progress
                 ADD COLUMN IF NOT EXISTS glossary JSONB NOT NULL DEFAULT '{}'::jsonb
             """)
+            # Library support: the file itself (or, for a plain web article,
+            # just the URL to re-fetch it from), so a saved book can be
+            # reopened without the user re-uploading it. page_index has to
+            # become nullable — a library entry saved at upload time, before
+            # any page has actually been read, means "no resume position
+            # yet," which must stay distinct from "resume at page 0."
+            cur.execute("ALTER TABLE reading_progress ALTER COLUMN page_index DROP NOT NULL")
+            cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS filename TEXT")
+            cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS suffix TEXT")
+            cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS file_bytes BYTEA")
+            cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS original_url TEXT")
+            cur.execute("ALTER TABLE reading_progress ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT FALSE")
     except Exception:
         pass
     finally:
@@ -82,6 +94,125 @@ def ensure_progress_table():
 
 
 ensure_progress_table()
+
+# A saved file larger than this just doesn't get added to the library —
+# the current reading session still works fine, it just won't show up in
+# "Your Books" afterward. Keeps one big upload from eating the whole
+# shared database storage budget.
+MAX_LIBRARY_FILE_BYTES = 25 * 1024 * 1024
+
+
+def save_file_to_library(content_hash: str, title: str, filename: str | None,
+                          suffix: str | None, file_bytes: bytes | None, original_url: str | None) -> bool:
+    """Best-effort, like save_progress — never blocks or breaks the upload
+    itself if the database is unavailable or the file's too large."""
+    if file_bytes is not None and len(file_bytes) > MAX_LIBRARY_FILE_BYTES:
+        return False
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO reading_progress (content_hash, title, filename, suffix, file_bytes, original_url, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (content_hash) DO UPDATE
+                SET title = EXCLUDED.title, filename = EXCLUDED.filename, suffix = EXCLUDED.suffix,
+                    file_bytes = EXCLUDED.file_bytes, original_url = EXCLUDED.original_url, updated_at = now()
+            """, (content_hash, title, filename, suffix, file_bytes, original_url))
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def list_library_books():
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT content_hash, title, filename, suffix, original_url, page_index, is_favorite, updated_at
+                FROM reading_progress
+                WHERE file_bytes IS NOT NULL OR original_url IS NOT NULL
+                ORDER BY is_favorite DESC, updated_at DESC
+            """)
+            rows = cur.fetchall()
+            return [
+                {
+                    "content_hash": r[0],
+                    "title": r[1] or r[2] or "Untitled",
+                    "filename": r[2],
+                    "suffix": r[3],
+                    "original_url": r[4],
+                    "page_index": r[5],
+                    "is_favorite": r[6],
+                    "updated_at": r[7].isoformat() if r[7] else None,
+                }
+                for r in rows
+            ]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def load_library_file(content_hash: str):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT title, filename, suffix, file_bytes, original_url "
+                "FROM reading_progress WHERE content_hash = %s",
+                (content_hash,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "title": row[0], "filename": row[1], "suffix": row[2],
+                "file_bytes": bytes(row[3]) if row[3] is not None else None,
+                "original_url": row[4],
+            }
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def set_favorite_book(content_hash: str) -> bool:
+    """Only one favorite at a time — picking a new one un-favorites the rest."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("UPDATE reading_progress SET is_favorite = FALSE WHERE content_hash != %s", (content_hash,))
+            cur.execute("UPDATE reading_progress SET is_favorite = TRUE WHERE content_hash = %s", (content_hash,))
+            return cur.rowcount > 0
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def get_favorite_book():
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT content_hash FROM reading_progress WHERE is_favorite = TRUE LIMIT 1")
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
 
 
 def get_saved_progress(content_hash: str):
@@ -591,14 +722,10 @@ def build_system_prompt(mode: str, num_pages: int, lang_name: str, checkpoint: b
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...), language: str = Form("english")):
-    suffix = os.path.splitext(file.filename or "")[1].lower()
-    if suffix not in {".pdf", ".txt", ".md", ".cbr", ".cbz"}:
-        raise HTTPException(400, f"Unsupported type '{suffix}'. Upload PDF, TXT, MD, CBR, or CBZ.")
-
-    raw = await file.read()
-
+async def build_content_from_bytes(raw: bytes, suffix: str, title: str, language: str) -> tuple[dict, str]:
+    """Shared by /upload (a fresh file) and /library/open (reopening a
+    previously saved one) — turns raw file bytes into the same response
+    shape the frontend expects either way. Returns (response, content_hash)."""
     if suffix == ".pdf":
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(raw)
@@ -648,7 +775,7 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
     content_hash = hashlib.sha256(raw).hexdigest()
     saved = await asyncio.to_thread(get_saved_progress, content_hash)
     content_store[content_id] = {
-        "title": file.filename,
+        "title": title,
         "pages": pages,
         "overview": overview,
         "pdf_bytes": raw if suffix == ".pdf" else None,
@@ -658,9 +785,10 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
     }
 
     has_page_images = is_comic or suffix == ".pdf"
-    return {
+    response = {
         "content_id": content_id,
-        "title": file.filename,
+        "content_hash": content_hash,
+        "title": title,
         "overview": overview,
         "total_pages": len(pages),
         "last_page_num": pages[-1]["page_num"],
@@ -674,6 +802,19 @@ async def upload_file(file: UploadFile = File(...), language: str = Form("englis
             for p in pages
         ],
     }
+    return response, content_hash
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), language: str = Form("english")):
+    suffix = os.path.splitext(file.filename or "")[1].lower()
+    if suffix not in {".pdf", ".txt", ".md", ".cbr", ".cbz"}:
+        raise HTTPException(400, f"Unsupported type '{suffix}'. Upload PDF, TXT, MD, CBR, or CBZ.")
+
+    raw = await file.read()
+    response, content_hash = await build_content_from_bytes(raw, suffix, file.filename, language)
+    await asyncio.to_thread(save_file_to_library, content_hash, file.filename, file.filename, suffix, raw, None)
+    return response
 
 
 class UrlUploadRequest(BaseModel):
@@ -681,17 +822,12 @@ class UrlUploadRequest(BaseModel):
     language: str = "english"
 
 
-@app.post("/upload-url")
-async def upload_url(req: UrlUploadRequest):
-    url = req.url.strip()
-    if not url:
-        raise HTTPException(400, "Please provide a link.")
-
-    try:
-        await asyncio.to_thread(validate_public_url, url)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
+async def build_content_from_url(url: str, language: str) -> tuple[dict, str, bytes | None]:
+    """Shared by /upload-url and /library/open — fetches and processes a web
+    link into the same response shape the frontend expects either way.
+    Returns (response, content_hash, pdf_bytes) — pdf_bytes is only non-None
+    for a direct PDF link, since a plain article is re-fetched from the URL
+    rather than stored."""
     try:
         content = await asyncio.to_thread(fetch_url_content, url)
     except ValueError as e:
@@ -704,7 +840,7 @@ async def upload_url(req: UrlUploadRequest):
         raise HTTPException(400, "No readable content found at that link.")
 
     try:
-        overview = await asyncio.to_thread(generate_book_overview, pages, req.language)
+        overview = await asyncio.to_thread(generate_book_overview, pages, language)
     except Exception:
         overview = ""
 
@@ -731,8 +867,9 @@ async def upload_url(req: UrlUploadRequest):
         "content_hash": content_hash,
     }
 
-    return {
+    response = {
         "content_id": content_id,
+        "content_hash": content_hash,
         "title": title,
         "overview": overview,
         "total_pages": len(pages),
@@ -747,6 +884,75 @@ async def upload_url(req: UrlUploadRequest):
             for p in pages
         ],
     }
+    return response, content_hash, content["pdf_bytes"]
+
+
+@app.post("/upload-url")
+async def upload_url(req: UrlUploadRequest):
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(400, "Please provide a link.")
+
+    try:
+        await asyncio.to_thread(validate_public_url, url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    response, content_hash, pdf_bytes = await build_content_from_url(url, req.language)
+    await asyncio.to_thread(
+        save_file_to_library, content_hash, response["title"], None, ".pdf" if pdf_bytes else None, pdf_bytes, url
+    )
+    return response
+
+
+@app.get("/library")
+async def get_library():
+    """Every book saved from a previous upload, so the frontend can list
+    them without needing the raw file contents."""
+    books = await asyncio.to_thread(list_library_books)
+    return {"books": books}
+
+
+class LibraryOpenRequest(BaseModel):
+    content_hash: str
+    language: str = "english"
+
+
+@app.post("/library/open")
+async def open_from_library(req: LibraryOpenRequest):
+    """Reopen a previously saved book without re-uploading it — pulls the
+    saved file (or re-fetches the saved URL) and runs it through the exact
+    same pipeline a fresh upload would."""
+    record = await asyncio.to_thread(load_library_file, req.content_hash)
+    if not record:
+        raise HTTPException(404, "That book isn't in your library.")
+
+    if record["file_bytes"] is not None:
+        title = record["filename"] or record["title"] or "Untitled"
+        response, _ = await build_content_from_bytes(
+            record["file_bytes"], record["suffix"] or ".txt", title, req.language
+        )
+        return response
+    if record["original_url"]:
+        response, _, _ = await build_content_from_url(record["original_url"], req.language)
+        return response
+    raise HTTPException(404, "Nothing saved for this book — try uploading it again.")
+
+
+class FavoriteRequest(BaseModel):
+    content_hash: str
+
+
+@app.post("/library/favorite")
+async def favorite_book(req: FavoriteRequest):
+    ok = await asyncio.to_thread(set_favorite_book, req.content_hash)
+    return {"saved": ok}
+
+
+@app.get("/library/favorite")
+async def get_favorite():
+    content_hash = await asyncio.to_thread(get_favorite_book)
+    return {"content_hash": content_hash}
 
 
 class ExplainRequest(BaseModel):

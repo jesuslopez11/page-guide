@@ -14,6 +14,7 @@ function loadPagesPerStepPref() {
 
 const state = {
   contentId:     null,
+  contentHash:   null,  // identifies the book in the saved library, independent of this session's content_id
   pages:         [],   // [{index, title, page_num}]
   overview:      '',   // generated once on upload — what this book is about
   currentIndex:  0,
@@ -541,6 +542,8 @@ const sidebar        = $('sidebar');
 const sidebarOverlay = $('sidebar-overlay');
 const urlInput       = $('url-input');
 const urlBtn         = $('url-btn');
+const librarySection = $('library-section');
+const libraryList    = $('library-list');
 
 // ── Mobile sidebar ────────────────────────────────────────────────────────────
 function openSidebar()  {
@@ -635,8 +638,91 @@ async function uploadUrl(url) {
   }
 }
 
+// ── Library (previously uploaded books, saved server-side) ─────────────────────
+// Every upload saves a copy of the file itself (not just reading progress),
+// so it can be reopened later from any device without re-uploading. This
+// list shows every book saved that way; clicking one reopens it instantly.
+async function loadLibrary() {
+  try {
+    const res = await fetch('/library');
+    if (!res.ok) return;
+    const data = await res.json();
+    renderLibrary(data.books || []);
+  } catch { /* best-effort — the upload screen still works without this */ }
+}
+
+function renderLibrary(books) {
+  if (!books.length) {
+    librarySection.hidden = true;
+    libraryList.innerHTML = '';
+    return;
+  }
+  librarySection.hidden = false;
+  libraryList.innerHTML = '';
+
+  books.forEach(book => {
+    const row = document.createElement('div');
+    row.className = 'library-item' + (book.content_hash === state.contentHash ? ' active' : '');
+
+    const star = document.createElement('button');
+    star.className = 'library-star' + (book.is_favorite ? ' active' : '');
+    star.title = book.is_favorite ? 'Unfavorite' : 'Open this one automatically next time';
+    star.textContent = book.is_favorite ? '⭐' : '☆';
+    star.onclick = async e => {
+      e.stopPropagation();
+      await fetch('/library/favorite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_hash: book.content_hash }),
+      }).catch(() => {});
+      loadLibrary();
+    };
+
+    const info = document.createElement('div');
+    info.className = 'library-info';
+    const title = document.createElement('div');
+    title.className = 'library-title';
+    title.textContent = book.title;
+    const progress = document.createElement('div');
+    progress.className = 'library-progress';
+    progress.textContent = typeof book.page_index === 'number' ? `Page ${book.page_index + 1}` : 'Not started';
+    info.appendChild(title);
+    info.appendChild(progress);
+
+    row.appendChild(star);
+    row.appendChild(info);
+    row.addEventListener('click', () => openFromLibrary(book.content_hash));
+    libraryList.appendChild(row);
+  });
+}
+
+async function openFromLibrary(contentHash) {
+  dropZone.querySelector('.drop-label').textContent = 'Opening…';
+  if (activeUploadController) activeUploadController.abort();
+  const controller = new AbortController();
+  activeUploadController = controller;
+  try {
+    const res = await fetch('/library/open', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ content_hash: contentHash, language: state.language }),
+      signal:  controller.signal,
+    });
+    if (!res.ok) {
+      let msg = `Could not open that book (${res.status})`;
+      try { const err = await res.json(); msg = err.detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    initBook(await res.json());
+    closeSidebar();
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    dropZone.querySelector('.drop-label').textContent = `Error: ${err.message}`;
+  }
+}
+
 function initBook(data) {
   state.contentId    = data.content_id;
+  state.contentHash  = data.content_hash || null;
   state.pages        = data.pages;
   state.overview     = data.overview || '';
   state.currentIndex = 0;
@@ -683,6 +769,7 @@ function initBook(data) {
     }
   }
   goToPage(startIndex);
+  loadLibrary(); // refresh the list — this book (new or updated) should show up in it
 }
 
 // ── Depth selector ────────────────────────────────────────────────────────────
@@ -1270,3 +1357,21 @@ function overviewHTML() {
   }
   return '';
 }
+
+// ── Startup ──────────────────────────────────────────────────────────────────
+// If a favorite book is set, skip the upload screen entirely and drop
+// straight into it at the saved page — otherwise just show the library list
+// (if any) alongside the normal upload options.
+(async function bootstrapLibrary() {
+  try {
+    const res = await fetch('/library/favorite');
+    if (res.ok) {
+      const { content_hash } = await res.json();
+      if (content_hash) {
+        await openFromLibrary(content_hash);
+        return; // openFromLibrary already calls loadLibrary() via initBook()
+      }
+    }
+  } catch { /* fall through to just showing the library list */ }
+  loadLibrary();
+})();

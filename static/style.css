@@ -112,6 +112,47 @@ body {
 }
 .jump-row button:hover { background: var(--accent-hover); }
 
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.library-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.library-item:hover { background: var(--surface); }
+.library-item.active { background: rgba(79,126,248,0.15); }
+.library-star {
+  background: none;
+  border: none;
+  padding: 2px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.library-star.active { color: #f5b400; }
+.library-info { min-width: 0; flex: 1; }
+.library-title {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-progress {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .nearby-pages {
   display: flex;
   flex-direction: column;

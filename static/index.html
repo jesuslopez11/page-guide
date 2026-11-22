@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Page Guide</title>
-  <link rel="stylesheet" href="/style.css?v=8" />
+  <link rel="stylesheet" href="/style.css?v=9" />
 </head>
 <body>
 
@@ -22,6 +22,11 @@
     <div class="jump-row">
       <input type="url" id="url-input" placeholder="https://example.com/article" />
       <button id="url-btn">→</button>
+    </div>
+
+    <div id="library-section" hidden>
+      <div class="url-divider">your books</div>
+      <div id="library-list" class="library-list"></div>
     </div>
 
     <div id="book-section" hidden>
@@ -90,6 +95,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="/script.js?v=19"></script>
+  <script src="/script.js?v=20"></script>
 </body>
 </html>
