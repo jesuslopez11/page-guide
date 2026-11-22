@@ -392,6 +392,7 @@ main {
 }
 .tts-btn:hover    { border-color: var(--accent); color: var(--accent); }
 .tts-btn:disabled { opacity: 0.5; cursor: default; }
+.tts-btn.active   { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .tts-skip-btn {
   flex: 0 0 auto;

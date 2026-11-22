@@ -67,6 +67,8 @@ function stopAudio() {
   if (panel) panel.remove();
   document.getElementById('tts-error')?.remove();
   setSkipButtonsEnabled(false);
+  repeatArmed = false;
+  updateRepeatButtonVisual();
 }
 
 function showTTSError(msg) {
@@ -116,6 +118,7 @@ let ttsUtteranceStartWord = 0;
 let ttsWordsThisUtterance = 0;
 let ttsPlayStartTime      = 0;
 let ttsOnEnd              = null;
+let repeatArmed           = false; // "repeat one" toggle — replay once when this page finishes, then behave normally
 
 function estimateWordsPerSecond() {
   // Not enough data yet to measure the real pace — fall back to a typical
@@ -152,6 +155,17 @@ function speakFromWord(btn, startWordIndex, onEnd) {
   };
 
   utterance.onend = () => {
+    // "Repeat" is armed like a music player's repeat-one button — it doesn't
+    // jump anywhere when clicked, it just waits for this page to finish
+    // naturally, replays it exactly once, then (since it's disarmed right
+    // here) behaves completely normally after that — advancing to the next
+    // page if auto-play is chaining, same as if repeat had never been used.
+    if (repeatArmed) {
+      repeatArmed = false;
+      updateRepeatButtonVisual();
+      speakFromWord(btn, 0, onEnd);
+      return;
+    }
     panel.remove();
     btn.disabled = false;
     btn.dataset.playing = '';
@@ -202,13 +216,19 @@ function skipSeconds(deltaSeconds) {
   speakFromWord(activeBtn, target, ttsOnEnd);
 }
 
-// "Got distracted, missed that" button — restarts the current page(s) from
-// the very beginning, then carries on exactly as before: if auto-play was
-// chaining to the next page afterward, it still will, since this reuses
-// whatever onEnd callback was already wired up rather than replacing it.
-function repeatCurrent() {
-  if (!activeBtn || !ttsWords.length) return;
-  speakFromWord(activeBtn, 0, ttsOnEnd);
+// "Got distracted, didn't catch that" button — like a music player's
+// repeat-one toggle. Clicking it doesn't jump anywhere right away; it just
+// arms a one-time replay for whenever the current page finishes on its own.
+// Click again to disarm it before it triggers.
+function toggleRepeat() {
+  if (!activeBtn) return;
+  repeatArmed = !repeatArmed;
+  updateRepeatButtonVisual();
+}
+
+function updateRepeatButtonVisual() {
+  const btn = document.getElementById('tts-repeat');
+  if (btn) btn.classList.toggle('active', repeatArmed);
 }
 
 function setSkipButtonsEnabled(enabled) {
@@ -371,8 +391,8 @@ function addTTSBar(explanationText) {
   btnRepeat.dataset.label = '🔁 Repeat';
   btnRepeat.textContent = btnRepeat.dataset.label;
   btnRepeat.disabled = true;
-  btnRepeat.title = 'Missed that — read this page again from the start, then continue as normal';
-  btnRepeat.onclick = () => repeatCurrent();
+  btnRepeat.title = 'Repeat once — when this finishes, it plays once more, then continues as normal';
+  btnRepeat.onclick = () => toggleRepeat();
 
   const speedControl = document.createElement('div');
   speedControl.className = 'speed-control';
