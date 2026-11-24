@@ -500,7 +500,7 @@ function addTTSBar(explanationText) {
   slider.type = 'range';
   slider.min = '0.5';
   slider.max = '2';
-  slider.step = '0.25';
+  slider.step = '0.1';
   slider.value = playbackSpeed;
   slider.className = 'speed-slider';
   slider.oninput = () => {
