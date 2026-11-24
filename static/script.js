@@ -288,13 +288,12 @@ async function speakFromWordServer(btn, startWordIndex, onEnd) {
   currentTTSAudio = audio;
   currentTTSAudioURL = audioUrl;
 
-  const wordsInClip = ttsWords.length - startWordIndex;
-  audio.ontimeupdate = () => {
-    if (!audio.duration || !isFinite(audio.duration)) return;
-    const progressed = Math.floor((audio.currentTime / audio.duration) * wordsInClip);
-    ttsWordIndex = Math.min(startWordIndex + progressed, ttsWords.length - 1);
-    highlightWordByIndex(panel, ttsWordIndex);
-  };
+  // Unlike the browser engine, real audio has no per-word timing info to
+  // highlight accurately — Google doesn't tell us when each word starts, so
+  // guessing from elapsed-time-vs-duration alone drifts noticeably (speech
+  // isn't a steady pace; it slows at punctuation, varies by word length).
+  // Rather than show a highlight that visibly falls out of sync with what's
+  // actually being read, just leave the full text showing, unhighlighted.
 
   audio.onended = () => {
     if (currentTTSAudioURL) { URL.revokeObjectURL(currentTTSAudioURL); currentTTSAudioURL = null; }
