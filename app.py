@@ -1258,6 +1258,36 @@ DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs "Rachel" (English)
 # if not configured.
 SPANISH_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID_ES", DEFAULT_VOICE_ID)
 
+# Google Cloud's free "Standard" voices — nicer than the browser's built-in
+# voice and, within the free monthly character allowance, actually free.
+# Override with GOOGLE_TTS_VOICE_EN / GOOGLE_TTS_VOICE_ES if you want a
+# different voice from Google's voice list.
+GOOGLE_TTS_VOICE_EN = os.getenv("GOOGLE_TTS_VOICE_EN", "en-US-Standard-C")
+GOOGLE_TTS_VOICE_ES = os.getenv("GOOGLE_TTS_VOICE_ES", "es-US-Standard-A")
+
+
+def call_google_tts(text: str, language: str, api_key: str) -> bytes:
+    import requests as req_lib
+    import base64
+
+    is_spanish = normalize_language(language) == "spanish"
+    voice_name = GOOGLE_TTS_VOICE_ES if is_spanish else GOOGLE_TTS_VOICE_EN
+    language_code = "es-US" if is_spanish else "en-US"
+
+    r = req_lib.post(
+        "https://texttospeech.googleapis.com/v1/text:synthesize",
+        params={"key": api_key},
+        json={
+            "input": {"text": text},
+            "voice": {"languageCode": language_code, "name": voice_name},
+            "audioConfig": {"audioEncoding": "MP3"},
+        },
+        timeout=30,
+    )
+    if not r.ok:
+        raise Exception(f"Google TTS {r.status_code}: {r.text}")
+    return base64.b64decode(r.json()["audioContent"])
+
 
 class TTSRequest(BaseModel):
     text: str = ""           # explanation text (sent from frontend)
@@ -1267,20 +1297,18 @@ class TTSRequest(BaseModel):
     voice_id: str = ""       # explicit override; empty = pick by language
 
 
+@app.get("/tts/available")
+async def tts_available():
+    """Lets the frontend silently switch to the better server-side voice the
+    moment a key is configured, with zero further changes on the user's end."""
+    return {"available": bool(os.getenv("GOOGLE_TTS_API_KEY") or os.getenv("ELEVENLABS_API_KEY"))}
+
+
 @app.post("/tts")
 async def text_to_speech(req: TTSRequest):
-    import requests as req_lib
     from fastapi.responses import Response
 
-    api_key = os.getenv("ELEVENLABS_API_KEY", "")
-    if not api_key:
-        raise HTTPException(500, "ELEVENLABS_API_KEY is not set. Add it to your environment variables.")
-
-    voice_id = req.voice_id or (
-        SPANISH_VOICE_ID if normalize_language(req.language) == "spanish" else DEFAULT_VOICE_ID
-    )
-
-    # Get the text to speak
+    # Get the text to speak (shared regardless of which provider ends up handling it)
     if req.text.strip():
         text = req.text.strip()[:4500]
     elif req.content_id and req.page_index >= 0:
@@ -1293,7 +1321,24 @@ async def text_to_speech(req: TTSRequest):
     else:
         raise HTTPException(400, "Provide either text or content_id + page_index.")
 
+    google_key = os.getenv("GOOGLE_TTS_API_KEY", "")
+    if google_key:
+        try:
+            audio_bytes = await asyncio.to_thread(call_google_tts, text, req.language, google_key)
+        except Exception as e:
+            raise HTTPException(502, f"Google TTS error: {e}")
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+
+    api_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if not api_key:
+        raise HTTPException(500, "Neither GOOGLE_TTS_API_KEY nor ELEVENLABS_API_KEY is set. Add one to your environment variables.")
+
+    voice_id = req.voice_id or (
+        SPANISH_VOICE_ID if normalize_language(req.language) == "spanish" else DEFAULT_VOICE_ID
+    )
+
     def call_elevenlabs():
+        import requests as req_lib
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         r = req_lib.post(
             url,
@@ -1431,10 +1476,14 @@ async def health():
 
 @app.get("/debug-key")
 async def debug_key():
-    key = os.getenv("ELEVENLABS_API_KEY", "")
-    if not key:
-        return {"key_set": False, "preview": ""}
-    return {"key_set": True, "preview": key[:8] + "..." + key[-4:]}
+    def preview(key: str) -> dict:
+        if not key:
+            return {"key_set": False, "preview": ""}
+        return {"key_set": True, "preview": key[:8] + "..." + key[-4:]}
+    return {
+        "google_tts":  preview(os.getenv("GOOGLE_TTS_API_KEY", "")),
+        "elevenlabs":  preview(os.getenv("ELEVENLABS_API_KEY", "")),
+    }
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

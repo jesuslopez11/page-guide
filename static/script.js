@@ -36,7 +36,18 @@ const state = {
 // ── Audio / TTS ────────────────────────────────────────────────────────────────
 let playbackSpeed = 1.0;
 let activeBtn = null;
-let currentTTSAudio = null; // the <audio> element when playing ElevenLabs (Spanish) audio
+let currentTTSAudio = null;    // the <audio> element when playing a server-generated voice
+let currentTTSAudioURL = null; // its blob: URL, so it can be released when done with it
+
+// The browser's own voice is free but often sounds robotic. If a real voice
+// key (Google/ElevenLabs) is configured on the server, every read-aloud
+// button should quietly use that instead — checked once here, so nothing
+// else about how the buttons are used has to change.
+let serverTTSAvailable = false;
+fetch('/tts/available')
+  .then(r => r.ok ? r.json() : { available: false })
+  .then(data => { serverTTSAvailable = !!data.available; })
+  .catch(() => {});
 
 // Voices load asynchronously in most browsers — cache them as soon as they're
 // ready so picking a Spanish voice doesn't race an empty list on first use.
@@ -57,6 +68,10 @@ function stopAudio() {
   if (currentTTSAudio) {
     currentTTSAudio.pause();
     currentTTSAudio = null;
+  }
+  if (currentTTSAudioURL) {
+    URL.revokeObjectURL(currentTTSAudioURL);
+    currentTTSAudioURL = null;
   }
   activeBtn = null;
   document.querySelectorAll('.tts-btn').forEach(btn => {
@@ -137,6 +152,14 @@ function estimateWordsPerSecond() {
 }
 
 function speakFromWord(btn, startWordIndex, onEnd) {
+  if (serverTTSAvailable) {
+    speakFromWordServer(btn, startWordIndex, onEnd);
+  } else {
+    speakFromWordBrowser(btn, startWordIndex, onEnd);
+  }
+}
+
+function speakFromWordBrowser(btn, startWordIndex, onEnd) {
   speechSynthesis.cancel();
   const panel = document.getElementById('reading-panel') || showReadingPanel(ttsWords);
 
@@ -171,7 +194,7 @@ function speakFromWord(btn, startWordIndex, onEnd) {
     if (repeatArmed) {
       repeatArmed = false;
       updateRepeatButtonVisual();
-      speakFromWord(btn, 0, onEnd);
+      speakFromWordBrowser(btn, 0, onEnd);
       return;
     }
     panel.remove();
@@ -217,8 +240,121 @@ function speakFromWord(btn, startWordIndex, onEnd) {
   }, 60);
 }
 
+// Same contract as speakFromWordBrowser (same btn/panel/repeat/onEnd
+// behavior), but the actual audio comes from the server's real voice
+// (Google/ElevenLabs) instead of the browser's own. Real audio means real
+// seeking — skipSeconds() below just moves audio.currentTime directly
+// instead of restarting from an estimated word position.
+async function speakFromWordServer(btn, startWordIndex, onEnd) {
+  if (currentTTSAudio) { currentTTSAudio.pause(); currentTTSAudio = null; }
+  if (currentTTSAudioURL) { URL.revokeObjectURL(currentTTSAudioURL); currentTTSAudioURL = null; }
+  const panel = document.getElementById('reading-panel') || showReadingPanel(ttsWords);
+
+  ttsUtteranceStartWord = startWordIndex;
+  ttsWordIndex          = startWordIndex;
+  ttsOnEnd              = onEnd;
+
+  const remainingText = ttsWords.slice(startWordIndex).join(' ');
+
+  activeBtn = btn;
+  btn.dataset.playing = '1';
+  btn.disabled = true;
+  btn.textContent = '⏳ Loading…';
+
+  let audioUrl;
+  try {
+    const res = await fetch('/tts', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text: remainingText, language: state.language }),
+    });
+    if (activeBtn !== btn) return; // superseded by a newer play/stop while this was in flight
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const blob = await res.blob();
+    audioUrl = URL.createObjectURL(blob);
+  } catch {
+    btn.disabled = false;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+    activeBtn = null;
+    panel.remove();
+    showTTSError("Couldn't reach the better voice — tap the button to try again.");
+    if (onEnd) onEnd(true);
+    return;
+  }
+
+  const audio = new Audio(audioUrl);
+  audio.playbackRate = playbackSpeed;
+  currentTTSAudio = audio;
+  currentTTSAudioURL = audioUrl;
+
+  const wordsInClip = ttsWords.length - startWordIndex;
+  audio.ontimeupdate = () => {
+    if (!audio.duration || !isFinite(audio.duration)) return;
+    const progressed = Math.floor((audio.currentTime / audio.duration) * wordsInClip);
+    ttsWordIndex = Math.min(startWordIndex + progressed, ttsWords.length - 1);
+    highlightWordByIndex(panel, ttsWordIndex);
+  };
+
+  audio.onended = () => {
+    if (currentTTSAudioURL) { URL.revokeObjectURL(currentTTSAudioURL); currentTTSAudioURL = null; }
+    // Same "repeat one" behavior as the browser engine — see the comment on
+    // speakFromWordBrowser's onend for why this waits instead of jumping.
+    if (repeatArmed) {
+      repeatArmed = false;
+      updateRepeatButtonVisual();
+      speakFromWordServer(btn, 0, onEnd);
+      return;
+    }
+    panel.remove();
+    btn.disabled = false;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+    activeBtn = null;
+    currentTTSAudio = null;
+    setSkipButtonsEnabled(false);
+    if (onEnd) onEnd(false);
+  };
+
+  audio.onerror = () => {
+    if (currentTTSAudioURL) { URL.revokeObjectURL(currentTTSAudioURL); currentTTSAudioURL = null; }
+    panel.remove();
+    btn.disabled = false;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+    activeBtn = null;
+    currentTTSAudio = null;
+    setSkipButtonsEnabled(false);
+    showTTSError("Couldn't play that aloud — tap the button to try again.");
+    if (onEnd) onEnd(true);
+  };
+
+  btn.disabled = false;
+  btn.textContent = '⏸ Pause';
+  setSkipButtonsEnabled(true);
+  audio.play().catch(() => {
+    if (activeBtn !== btn) return;
+    btn.dataset.playing = '';
+    btn.textContent = btn.dataset.label;
+    activeBtn = null;
+    setSkipButtonsEnabled(false);
+    showTTSError('Playback was blocked — tap the button again to start it.');
+    if (onEnd) onEnd(true);
+  });
+}
+
 function skipSeconds(deltaSeconds) {
-  if (!activeBtn || !ttsWords.length) return;
+  if (!activeBtn) return;
+  if (currentTTSAudio) {
+    // Real audio supports real seeking — no need to restart anything.
+    const d = currentTTSAudio.duration;
+    currentTTSAudio.currentTime = Math.max(0, Math.min(
+      currentTTSAudio.currentTime + deltaSeconds,
+      isFinite(d) ? d : currentTTSAudio.currentTime + deltaSeconds
+    ));
+    return;
+  }
+  if (!ttsWords.length) return;
   const wordDelta = Math.max(1, Math.round(estimateWordsPerSecond() * Math.abs(deltaSeconds)));
   const target = Math.max(0, Math.min(ttsWordIndex + (deltaSeconds < 0 ? -wordDelta : wordDelta), ttsWords.length - 1));
   speakFromWord(activeBtn, target, ttsOnEnd);
@@ -250,7 +386,15 @@ function setSkipButtonsEnabled(enabled) {
 
 function speakText(btn, text, onEnd) {
   if (btn.dataset.playing === '1') {
-    if (speechSynthesis.paused) {
+    if (currentTTSAudio) {
+      if (currentTTSAudio.paused) {
+        currentTTSAudio.play();
+        btn.textContent = '⏸ Pause';
+      } else {
+        currentTTSAudio.pause();
+        btn.textContent = '▶ Resume';
+      }
+    } else if (speechSynthesis.paused) {
       speechSynthesis.resume();
       btn.textContent = '⏸ Pause';
     } else {
@@ -263,74 +407,6 @@ function speakText(btn, text, onEnd) {
   stopAudio();
   ttsWords = text.trim().split(/\s+/);
   speakFromWord(btn, 0, onEnd);
-}
-
-// Spanish read-aloud goes through the backend (ElevenLabs) instead of the
-// browser's local voices, since most machines don't have a Spanish voice
-// installed — English keeps using the free browser voices.
-async function speakViaElevenLabs(btn, text, onEnd) {
-  if (btn.dataset.playing === '1') {
-    if (currentTTSAudio) {
-      if (currentTTSAudio.paused) {
-        currentTTSAudio.play();
-        btn.textContent = '⏸ Pause';
-      } else {
-        currentTTSAudio.pause();
-        btn.textContent = '▶ Resume';
-      }
-    }
-    return;
-  }
-
-  stopAudio();
-  btn.disabled = true;
-  btn.textContent = '⏳ Loading…';
-
-  try {
-    const res = await fetch('/tts', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ text, language: state.language }),
-    });
-    if (!res.ok) {
-      let msg = 'Could not generate audio.';
-      try { const err = await res.json(); msg = err.detail || msg; } catch {}
-      throw new Error(msg);
-    }
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.playbackRate = playbackSpeed;
-    currentTTSAudio = audio;
-
-    const cleanup = () => {
-      URL.revokeObjectURL(url);
-      btn.disabled = false;
-      btn.dataset.playing = '';
-      btn.textContent = btn.dataset.label;
-      activeBtn = null;
-      currentTTSAudio = null;
-    };
-    audio.onended = () => { cleanup(); if (onEnd) onEnd(false); };
-    audio.onerror = () => {
-      cleanup();
-      showTTSError('The audio ElevenLabs returned could not be played.');
-      if (onEnd) onEnd(true);
-    };
-
-    activeBtn = btn;
-    btn.dataset.playing = '1';
-    btn.disabled = false;
-    btn.textContent = '⏸ Pause';
-    audio.play();
-  } catch (err) {
-    btn.disabled = false;
-    btn.dataset.playing = '';
-    btn.textContent = btn.dataset.label;
-    showTTSError(err.message || 'Could not play audio.');
-    if (onEnd) onEnd(true);
-  }
 }
 
 function ttsPlay(btn, text, onEnd) {
