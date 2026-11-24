@@ -92,7 +92,14 @@ function showReadingPanel(words) {
     `<span class="word" data-i="${i}">${w}</span>`
   ).join(' ');
   const bar = document.getElementById('tts-bar');
-  bar.parentNode.insertBefore(panel, bar);
+  // The overview box's own play button can be used before the page's TTS
+  // bar exists yet (while the explanation is still loading) — fall back to
+  // just appending to the output area instead of crashing on a missing bar.
+  if (bar) {
+    bar.parentNode.insertBefore(panel, bar);
+  } else {
+    output.appendChild(panel);
+  }
   return panel;
 }
 
@@ -328,6 +335,17 @@ async function speakViaElevenLabs(btn, text, onEnd) {
 
 function ttsPlay(btn, text, onEnd) {
   speakText(btn, text, onEnd);
+}
+
+// Lets the reader hear the "where you are" / "coming up" recap (or the book
+// overview, before anything's been read yet) without having to open the page
+// itself — a quick way to decide whether they actually need to read it.
+function playOverviewAloud(btn) {
+  const text = state.summary
+    ? state.summary + (state.nextTeaser ? ` Coming up next: ${state.nextTeaser}` : '')
+    : state.overview;
+  if (!text) return;
+  ttsPlay(btn, text);
 }
 
 function addTTSBar(explanationText) {
@@ -1343,7 +1361,10 @@ function overviewHTML() {
       ? `<span class="overview-next"><span class="overview-next-label">Coming up →</span>${state.nextTeaser}…</span>`
       : '';
     return `<div class="overview-box" id="context-box">
-      <span class="overview-label">Where you are</span>
+      <div class="overview-label-row">
+        <span class="overview-label">Where you are</span>
+        <button class="tts-btn overview-play-btn" id="overview-play-btn" data-label="🔊" title="Listen to this instead of reading it" onclick="playOverviewAloud(this)">🔊</button>
+      </div>
       <div class="overview-summary">${marked.parse(state.summary)}</div>
       ${teaser}
     </div>`;
@@ -1351,7 +1372,10 @@ function overviewHTML() {
   if (state.overview) {
     // Before reading anything, show the book overview
     return `<div class="overview-box" id="context-box">
-      <span class="overview-label">About this book</span>
+      <div class="overview-label-row">
+        <span class="overview-label">About this book</span>
+        <button class="tts-btn overview-play-btn" id="overview-play-btn" data-label="🔊" title="Listen to this instead of reading it" onclick="playOverviewAloud(this)">🔊</button>
+      </div>
       ${marked.parse(state.overview)}
     </div>`;
   }

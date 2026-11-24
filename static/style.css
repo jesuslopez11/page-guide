@@ -493,6 +493,13 @@ main {
   color: #a0aec0;
   line-height: 1.7;
 }
+.overview-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
 .overview-label {
   display: block;
   font-size: 10px;
@@ -501,6 +508,14 @@ main {
   letter-spacing: 0.06em;
   color: var(--accent);
   margin-bottom: 5px;
+}
+.overview-label-row .overview-label { margin-bottom: 0; }
+.overview-play-btn {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  font-size: 12px;
+  border-radius: 6px;
+  line-height: 1.5;
 }
 .overview-summary {
   display: block;
