@@ -1471,13 +1471,39 @@ function overviewHTML() {
 // normal rather than staying on indefinitely in the background. This only
 // runs while this tab is open and active; closing it (or a phone fully
 // backgrounding it) stops the pings, same as if this code weren't here.
+//
+// On a phone, a locked screen freezes this tab's JavaScript completely —
+// nothing a website does can ping anything once that happens. The Screen
+// Wake Lock API asks the browser to hold off the *automatic* lock-from-
+// inactivity for as long as this page is open and visible, which is enough
+// to let the above keep going through a normal reading session. It can't
+// (and shouldn't be able to) stop someone from pressing the physical lock
+// button themselves, and it releases the moment this tab is backgrounded —
+// re-requested below if the tab comes back to the front within the hour.
 (function keepServerAwakeForAnHour() {
   const PING_EVERY_MS = 10 * 60 * 1000;   // comfortably under Render's ~15 min sleep timer
   const STOP_AFTER_MS = 60 * 60 * 1000;   // 1 hour from opening the app
   const openedAt = Date.now();
+  let wakeLock = null;
+
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return; // not supported on this browser — nothing more we can do
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+    } catch { /* refused (e.g. low battery mode) — the ping below still runs as long as the tab stays active */ }
+  }
+  requestWakeLock();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - openedAt < STOP_AFTER_MS) {
+      requestWakeLock();
+    }
+  });
+
   const interval = setInterval(() => {
     if (Date.now() - openedAt >= STOP_AFTER_MS) {
       clearInterval(interval);
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
       return;
     }
     fetch('/health').catch(() => {});
