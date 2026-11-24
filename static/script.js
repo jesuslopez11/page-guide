@@ -1463,6 +1463,27 @@ function overviewHTML() {
   return '';
 }
 
+// Render's free tier puts the server to sleep after ~15 minutes with no
+// traffic, so opening the app and then just sitting and reading for a while
+// can land you back on a "waking up" screen mid-session. Pinging a cheap
+// endpoint every few minutes keeps it awake — but only for an hour from
+// when the page was opened, then it's allowed to go back to sleep like
+// normal rather than staying on indefinitely in the background. This only
+// runs while this tab is open and active; closing it (or a phone fully
+// backgrounding it) stops the pings, same as if this code weren't here.
+(function keepServerAwakeForAnHour() {
+  const PING_EVERY_MS = 10 * 60 * 1000;   // comfortably under Render's ~15 min sleep timer
+  const STOP_AFTER_MS = 60 * 60 * 1000;   // 1 hour from opening the app
+  const openedAt = Date.now();
+  const interval = setInterval(() => {
+    if (Date.now() - openedAt >= STOP_AFTER_MS) {
+      clearInterval(interval);
+      return;
+    }
+    fetch('/health').catch(() => {});
+  }, PING_EVERY_MS);
+})();
+
 // ── Startup ──────────────────────────────────────────────────────────────────
 // If a favorite book is set, skip the upload screen entirely and drop
 // straight into it at the saved page — otherwise just show the library list
