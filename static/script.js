@@ -418,13 +418,11 @@ function ttsPlay(btn, text, onEnd) {
   speakText(btn, text, onEnd);
 }
 
-// Lets the reader hear the "where you are" / "coming up" recap (or the book
-// overview, before anything's been read yet) without having to open the page
-// itself — a quick way to decide whether they actually need to read it.
+// Lets the reader hear the "where you are" recap (or the book overview,
+// before anything's been read yet) without having to open the page itself —
+// a quick way to decide whether they actually need to read it.
 function playOverviewAloud(btn) {
-  const text = state.summary
-    ? state.summary + (state.nextTeaser ? ` Coming up next: ${state.nextTeaser}` : '')
-    : state.overview;
+  const text = state.summary || state.overview;
   if (!text) return;
   ttsPlay(btn, text);
 }
@@ -435,8 +433,18 @@ function addTTSBar(explanationText) {
   bar.id = 'tts-bar';
   bar.className = 'tts-bar';
 
+  // A copy of the overview box's own quick-listen button, down here in the
+  // bottom bar — on a phone, scrolling all the way back up just to tap that
+  // small button (then back down again) is a real hassle.
+  const btnSummary = document.createElement('button');
+  btnSummary.className = 'tts-btn';
+  btnSummary.dataset.label = '📍 Read summary';
+  btnSummary.textContent   = '📍 Read summary';
+  btnSummary.onclick = () => playOverviewAloud(btnSummary);
+
   const btnExp = document.createElement('button');
   btnExp.className = 'tts-btn';
+  btnExp.id = 'tts-read-explanation';
   btnExp.dataset.label = '🔊 Read explanation';
   btnExp.textContent   = '🔊 Read explanation';
   btnExp.onclick = () => ttsPlay(btnExp, explanationText);
@@ -517,6 +525,7 @@ function addTTSBar(explanationText) {
   speedControl.appendChild(slider);
   speedControl.appendChild(speedLabel);
 
+  bar.appendChild(btnSummary);
   bar.appendChild(btnExp);
   bar.appendChild(btnPage);
   bar.appendChild(btnSkipBack);
@@ -553,7 +562,7 @@ function startAutoPlay() {
   // reading it right now instead of waiting for the next page to trigger
   // addTTSBar's own auto-play check. If it's still streaming, addTTSBar
   // will pick up state.autoPlay once it finishes — nothing more to do here.
-  const btnExp = document.querySelector('#tts-bar .tts-btn');
+  const btnExp = document.getElementById('tts-read-explanation');
   const explanationDiv = document.querySelector('.explanation');
   if (btnExp && explanationDiv && btnExp.dataset.playing !== '1') {
     playWithAutoChain(btnExp, explanationDiv.innerText);
@@ -1437,17 +1446,13 @@ function openPageImageLightbox(src) {
 
 function overviewHTML() {
   if (state.summary) {
-    // Once the user has read pages, show where they are + what's coming
-    const teaser = state.nextTeaser
-      ? `<span class="overview-next"><span class="overview-next-label">Coming up →</span>${state.nextTeaser}…</span>`
-      : '';
+    // Once the user has read pages, show where they are
     return `<div class="overview-box" id="context-box">
       <div class="overview-label-row">
         <span class="overview-label">Where you are</span>
         <button class="tts-btn overview-play-btn" id="overview-play-btn" data-label="🔊" title="Listen to this instead of reading it" onclick="playOverviewAloud(this)">🔊</button>
       </div>
       <div class="overview-summary">${marked.parse(state.summary)}</div>
-      ${teaser}
     </div>`;
   }
   if (state.overview) {
