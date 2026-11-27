@@ -123,6 +123,10 @@ function showReadingPanel(words) {
   } else {
     output.appendChild(panel);
   }
+  // This panel appearing pushes the TTS buttons further down the page,
+  // past wherever the last scroll landed — re-land at the bottom so
+  // pressing play doesn't require an extra manual nudge to see them.
+  output.scrollTop = output.scrollHeight;
   return panel;
 }
 
