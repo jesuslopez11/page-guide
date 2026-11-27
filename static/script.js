@@ -65,6 +65,7 @@ function pickVoice(lang) {
 
 function stopAudio() {
   speechSynthesis.cancel();
+  stopBrowserNudge();
   if (currentTTSAudio) {
     currentTTSAudio.pause();
     currentTTSAudio = null;
@@ -143,6 +144,18 @@ let ttsPlayStartTime      = 0;
 let ttsOnEnd              = null;
 let repeatArmed           = false; // "repeat one" toggle — replay once when this page finishes, then behave normally
 
+// Chrome (and some other browsers) have a long-standing bug where the
+// browser's own speech engine silently stops mid-utterance after roughly 15
+// seconds of continuous speech — exactly the "words keep highlighting, then
+// the audio just cuts out" symptom. Pausing and immediately resuming resets
+// whatever internal timer causes this, without actually interrupting what's
+// being said, so this "nudges" it every few seconds while it's genuinely
+// speaking (never while the reader has deliberately paused it themselves).
+let browserNudgeInterval = null;
+function stopBrowserNudge() {
+  if (browserNudgeInterval) { clearInterval(browserNudgeInterval); browserNudgeInterval = null; }
+}
+
 function estimateWordsPerSecond() {
   // Not enough data yet to measure the real pace — fall back to a typical
   // speaking rate, scaled by the chosen playback speed.
@@ -161,6 +174,7 @@ function speakFromWord(btn, startWordIndex, onEnd) {
 
 function speakFromWordBrowser(btn, startWordIndex, onEnd) {
   speechSynthesis.cancel();
+  stopBrowserNudge();
   const panel = document.getElementById('reading-panel') || showReadingPanel(ttsWords);
 
   const remainingText = ttsWords.slice(startWordIndex).join(' ');
@@ -186,6 +200,7 @@ function speakFromWordBrowser(btn, startWordIndex, onEnd) {
   };
 
   utterance.onend = () => {
+    stopBrowserNudge();
     // "Repeat" is armed like a music player's repeat-one button — it doesn't
     // jump anywhere when clicked, it just waits for this page to finish
     // naturally, replays it exactly once, then (since it's disarmed right
@@ -207,6 +222,7 @@ function speakFromWordBrowser(btn, startWordIndex, onEnd) {
   };
 
   utterance.onerror = event => {
+    stopBrowserNudge();
     panel.remove();
     btn.disabled = false;
     btn.dataset.playing = '';
@@ -236,7 +252,14 @@ function speakFromWordBrowser(btn, startWordIndex, onEnd) {
     // Only actually start it if this is still the thing that's supposed to
     // be playing — something else (navigating away, another skip, stopping
     // playback entirely) may have taken over during that short delay.
-    if (activeBtn === btn) speechSynthesis.speak(utterance);
+    if (activeBtn !== btn) return;
+    speechSynthesis.speak(utterance);
+    browserNudgeInterval = setInterval(() => {
+      if (speechSynthesis.speaking && !speechSynthesis.paused) {
+        speechSynthesis.pause();
+        speechSynthesis.resume();
+      }
+    }, 10000);
   }, 60);
 }
 
