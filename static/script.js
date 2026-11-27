@@ -64,6 +64,13 @@ function pickVoice(lang) {
 }
 
 function stopAudio() {
+  if (currentUtterance) {
+    currentUtterance.onend = null;
+    currentUtterance.onerror = null;
+    currentUtterance.onboundary = null;
+    currentUtterance = null;
+  }
+  browserVoicePaused = false;
   speechSynthesis.cancel();
   stopBrowserNudge();
   if (currentTTSAudio) {
@@ -156,6 +163,26 @@ function stopBrowserNudge() {
   if (browserNudgeInterval) { clearInterval(browserNudgeInterval); browserNudgeInterval = null; }
 }
 
+// The browser's native pause()/resume() pairing is itself unreliable —
+// resuming after sitting paused a while can come back glitchy, or not come
+// back at all. So "pause" here doesn't call the browser's pause() at all —
+// it fully stops the utterance (remembering exactly which word to pick back
+// up from) and "resume" just restarts cleanly from there, same mechanism
+// the skip buttons already use. currentUtterance's handlers are cleared
+// first so this intentional stop doesn't get reported as a real end/error.
+let currentUtterance = null;
+let browserVoicePaused = false;
+function pauseBrowserVoice() {
+  if (currentUtterance) {
+    currentUtterance.onend = null;
+    currentUtterance.onerror = null;
+    currentUtterance.onboundary = null;
+  }
+  stopBrowserNudge();
+  speechSynthesis.cancel();
+  browserVoicePaused = true;
+}
+
 function estimateWordsPerSecond() {
   // Not enough data yet to measure the real pace — fall back to a typical
   // speaking rate, scaled by the chosen playback speed.
@@ -175,10 +202,12 @@ function speakFromWord(btn, startWordIndex, onEnd) {
 function speakFromWordBrowser(btn, startWordIndex, onEnd) {
   speechSynthesis.cancel();
   stopBrowserNudge();
+  browserVoicePaused = false;
   const panel = document.getElementById('reading-panel') || showReadingPanel(ttsWords);
 
   const remainingText = ttsWords.slice(startWordIndex).join(' ');
   const utterance = new SpeechSynthesisUtterance(remainingText);
+  currentUtterance = utterance;
   utterance.rate = playbackSpeed;
 
   const lang = state.language === 'spanish' ? 'es-MX' : 'en-US';
@@ -422,14 +451,14 @@ function speakText(btn, text, onEnd) {
         currentTTSAudio.pause();
         btn.textContent = '▶ Resume';
       }
-    } else if (speechSynthesis.paused) {
-      // The browser's own "resume" is unreliable after sitting paused a
-      // while — it can come back stuttering/garbled. Restarting cleanly
-      // from the exact word we left off on (the same trick the skip
-      // buttons use) is just as instant and doesn't have that problem.
+    } else if (browserVoicePaused) {
+      // The browser's own pause()/resume() pairing is unreliable — resuming
+      // after sitting paused a while can come back stuttering, or silent.
+      // Restarting cleanly from the exact word we left off on (the same
+      // trick the skip buttons use) sidesteps that entirely.
       speakFromWordBrowser(btn, ttsWordIndex, ttsOnEnd);
     } else {
-      speechSynthesis.pause();
+      pauseBrowserVoice();
       btn.textContent = '▶ Resume';
     }
     return;
