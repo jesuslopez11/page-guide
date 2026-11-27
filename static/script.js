@@ -423,8 +423,11 @@ function speakText(btn, text, onEnd) {
         btn.textContent = '▶ Resume';
       }
     } else if (speechSynthesis.paused) {
-      speechSynthesis.resume();
-      btn.textContent = '⏸ Pause';
+      // The browser's own "resume" is unreliable after sitting paused a
+      // while — it can come back stuttering/garbled. Restarting cleanly
+      // from the exact word we left off on (the same trick the skip
+      // buttons use) is just as instant and doesn't have that problem.
+      speakFromWordBrowser(btn, ttsWordIndex, ttsOnEnd);
     } else {
       speechSynthesis.pause();
       btn.textContent = '▶ Resume';
