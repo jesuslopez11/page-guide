@@ -534,6 +534,10 @@ function addTTSBar(explanationText) {
   bar.appendChild(speedControl);
   output.appendChild(bar);
 
+  // Land on the TTS controls the moment they're ready, instead of leaving
+  // the reader to scroll all the way down to them on every single page.
+  output.scrollTop = output.scrollHeight;
+
   // Auto-play: every time a page's explanation finishes loading (fresh
   // stream or cache hit both call addTTSBar), if auto-play is on, read it
   // and chain to the next page when the speech naturally ends.
